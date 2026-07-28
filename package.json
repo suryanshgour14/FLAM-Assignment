@@ -1,0 +1,32 @@
+{
+  "name": "performance-dashboard",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Real-time data visualization dashboard rendering 10k+ points at 60fps. Built from scratch on Canvas + SVG.",
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "lint": "next lint",
+    "typecheck": "tsc --noEmit",
+    "analyze": "cross-env ANALYZE=true next build"
+  },
+  "dependencies": {
+    "next": "^15.5.22",
+    "react": "19.1.1",
+    "react-dom": "19.1.1"
+  },
+  "devDependencies": {
+    "@next/bundle-analyzer": "^15.5.22",
+    "@types/node": "22.15.3",
+    "@types/react": "19.1.2",
+    "@types/react-dom": "19.1.2",
+    "cross-env": "7.0.3",
+    "eslint": "9.25.1",
+    "eslint-config-next": "^15.5.22",
+    "typescript": "5.8.3"
+  },
+  "engines": {
+    "node": ">=18.18.0"
+  }
+}
