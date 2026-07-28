@@ -11,13 +11,20 @@ import { CATEGORIES, type Category } from '@/lib/types';
 /**
  * Channel × time intensity map.
  *
- * Drawn by writing pixels into an `ImageData` buffer and blitting once, rather
- * than issuing one `fillRect` per cell. With 8 rows × 240 columns that's ~2000
- * draw calls per frame the naive way; here it's a single `putImageData`.
+ * The first version of this built an `ImageData` at full device resolution and
+ * wrote every pixel by hand — 1288 × 446 is ~574,000 pixels, so 2.3 million
+ * array writes per frame. It was single-handedly responsible for dropping the
+ * dashboard to 24fps under load, and it was pure waste: the map only has
+ * `cols × rows` distinct colours in it, and every pixel inside a cell is
+ * identical to its neighbours.
  *
- * The subtlety is that ImageData is in *device* pixels, so it has to be built
- * at DPR scale and blitted with the transform reset — otherwise it comes out
- * blurry on Retina, or half-size, depending on which half you get wrong.
+ * So now the buffer is built at *cell* resolution — one pixel per cell, ~512×8
+ * = 4,096 writes — painted into a small scratch canvas, and scaled up with
+ * `drawImage` and smoothing off. The GPU does the magnification for free and
+ * the cell edges stay crisp. Same output, ~140× less CPU work.
+ *
+ * Each row is blitted separately so the gaps between channels survive the
+ * scale-up.
  *
  * Values are normalised per channel, not globally. Throughput sits around 1450
  * and error rate around 4; on one shared scale every row except throughput
@@ -27,15 +34,26 @@ import { CATEGORIES, type Category } from '@/lib/types';
 const ROW_GAP = 2;
 const LABEL_W = 92;
 const AXIS_H = 22;
+/** Cell columns. Fixed rather than width-derived, so the scratch canvas is stable. */
+const MAX_COLS = 480;
 
 function HeatmapImpl() {
   const { store } = useDataStore();
   const filters = useFilters();
   const window_ = useTimeWindow();
 
-  // The ImageData is reallocated only when the surface size changes, not per
-  // frame — allocating a few hundred KB 60 times a second is a GC generator.
-  const imageRef = useRef<{ data: ImageData; w: number; h: number } | null>(null);
+  /**
+   * Scratch surface holding the cell-resolution buffer. Created once; at
+   * 480 × 8 it is under 16 KB, so it never needs resizing and never allocates
+   * inside the frame loop.
+   */
+  const scratchRef = useRef<{
+    canvas: HTMLCanvasElement;
+    ctx: CanvasRenderingContext2D;
+    image: ImageData;
+    colAvg: Float32Array;
+    colCount: Uint32Array;
+  } | null>(null);
 
   const rows = useMemo(() => {
     const selected = filters.categories;
@@ -45,7 +63,7 @@ function HeatmapImpl() {
   }, [filters.categories]);
 
   const draw = useCallback(
-    ({ ctx, width, height, dpr }: RenderArgs) => {
+    ({ ctx, width, height }: RenderArgs) => {
       ctx.clearRect(0, 0, width, height);
       if (rows.length === 0 || width <= LABEL_W + 20 || height <= AXIS_H + 20) return;
 
@@ -59,37 +77,44 @@ function HeatmapImpl() {
       const rowH = plotH / rows.length;
       const cellH = Math.max(1, rowH - ROW_GAP);
 
-      // One column per ~3 CSS px keeps the map legible without turning it into
-      // a line chart made of pixels.
-      const cols = Math.max(8, Math.min(512, Math.floor(plotW / 3)));
+      // One cell per ~3 CSS px keeps the map legible without turning it into a
+      // line chart made of pixels.
+      const cols = Math.max(8, Math.min(MAX_COLS, Math.floor(plotW / 3)));
 
-      // --- Build the pixel buffer -----------------------------------------
-      const pxW = Math.max(1, Math.round(plotW * dpr));
-      const pxH = Math.max(1, Math.round(plotH * dpr));
-
-      let image = imageRef.current;
-      if (!image || image.w !== pxW || image.h !== pxH) {
-        image = { data: ctx.createImageData(pxW, pxH), w: pxW, h: pxH };
-        imageRef.current = image;
+      // --- Lazily build the scratch surface --------------------------------
+      let scratch = scratchRef.current;
+      if (!scratch) {
+        const canvas = document.createElement('canvas');
+        canvas.width = MAX_COLS;
+        canvas.height = 8; // one row per channel, and there are eight channels
+        const sctx = canvas.getContext('2d', { alpha: false, willReadFrequently: false });
+        if (!sctx) return;
+        scratch = {
+          canvas,
+          ctx: sctx,
+          image: sctx.createImageData(MAX_COLS, 8),
+          colAvg: new Float32Array(MAX_COLS),
+          colCount: new Uint32Array(MAX_COLS),
+        };
+        scratchRef.current = scratch;
       }
-      const buf = image.data.data;
-      buf.fill(0);
 
-      const colAvg = new Float32Array(cols);
-      const colCount = new Uint32Array(cols);
+      const { colAvg, colCount, image } = scratch;
+      const buf = image.data;
 
+      // --- Fill the cell buffer, one pixel per cell ------------------------
       for (let r = 0; r < rows.length; r += 1) {
-        const cat = rows[r];
-        const ch = store.channels[cat];
-        colAvg.fill(0);
-        colCount.fill(0);
+        const ch = store.channels[rows[r]];
+        colAvg.fill(0, 0, cols);
+        colCount.fill(0, 0, cols);
 
         if (ch.size > 0) {
           const start = ch.lowerBound(from);
           const end = ch.upperBound(to);
+          const k = cols / span;
           for (let i = start; i < end; i += 1) {
             const p = ch.physical(i);
-            let c = Math.floor(((ch.timestamps[p] - from) / span) * cols);
+            let c = ((ch.timestamps[p] - from) * k) | 0;
             if (c < 0) c = 0;
             else if (c >= cols) c = cols - 1;
             colAvg[c] += ch.values[p];
@@ -109,43 +134,41 @@ function HeatmapImpl() {
         }
         const norm = hi > lo ? 1 / (hi - lo) : 0;
 
-        const rowTopPx = Math.round(r * rowH * dpr);
-        const rowBotPx = Math.min(pxH, Math.round((r * rowH + cellH) * dpr));
-
+        let idx = r * MAX_COLS * 4;
         for (let c = 0; c < cols; c += 1) {
-          const x0 = Math.round((c / cols) * pxW);
-          const x1 = Math.round(((c + 1) / cols) * pxW);
-          if (x1 <= x0) continue;
-
-          let cr = 14;
-          let cg = 16;
-          let cb = 24;
-          if (colCount[c] > 0) {
-            const t = norm === 0 ? 0.5 : (colAvg[c] - lo) * norm;
-            const rgb = heatColor(t);
-            cr = rgb[0];
-            cg = rgb[1];
-            cb = rgb[2];
+          if (colCount[c] === 0) {
+            buf[idx] = 14;
+            buf[idx + 1] = 16;
+            buf[idx + 2] = 24;
+          } else {
+            const rgb = heatColor(norm === 0 ? 0.5 : (colAvg[c] - lo) * norm);
+            buf[idx] = rgb[0];
+            buf[idx + 1] = rgb[1];
+            buf[idx + 2] = rgb[2];
           }
-
-          for (let y = rowTopPx; y < rowBotPx; y += 1) {
-            let idx = (y * pxW + x0) * 4;
-            for (let x = x0; x < x1; x += 1) {
-              buf[idx] = cr;
-              buf[idx + 1] = cg;
-              buf[idx + 2] = cb;
-              buf[idx + 3] = 255;
-              idx += 4;
-            }
-          }
+          buf[idx + 3] = 255;
+          idx += 4;
         }
       }
 
-      // putImageData ignores the current transform, so it needs device-pixel
-      // coordinates. Save/restore around it keeps the DPR scale for the text.
+      scratch.ctx.putImageData(image, 0, 0);
+
+      // --- Scale each row up separately, so the gaps survive ---------------
       ctx.save();
-      ctx.setTransform(1, 0, 0, 1, 0, 0);
-      ctx.putImageData(image.data, Math.round(plotX * dpr), 0);
+      ctx.imageSmoothingEnabled = false;
+      for (let r = 0; r < rows.length; r += 1) {
+        ctx.drawImage(
+          scratch.canvas,
+          0,
+          r,
+          cols,
+          1, // source: one row of cells
+          plotX,
+          r * rowH,
+          plotW,
+          cellH, // destination: full width, one channel band
+        );
+      }
       ctx.restore();
 
       // --- Labels ----------------------------------------------------------
@@ -178,6 +201,9 @@ function HeatmapImpl() {
     draw,
     revision: () => store.version,
     priority: 3,
+    // Each cell already averages hundreds of samples, so one more batch moves
+    // it by a fraction of a shade. 12Hz is indistinguishable from 60 here.
+    maxFps: 12,
   });
 
   return (

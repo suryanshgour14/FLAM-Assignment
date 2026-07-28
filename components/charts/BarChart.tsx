@@ -168,6 +168,8 @@ function BarChartImpl() {
     draw,
     revision: () => store.version,
     priority: 1,
+    // Bars are aggregates over whole buckets — they move slowly by construction.
+    maxFps: 24,
   });
 
   const activeWindow = AGGREGATION_WINDOWS.find((w) => w.id === filters.aggregation);

@@ -141,6 +141,10 @@ function ScatterPlotImpl() {
     draw,
     revision: () => store.version,
     priority: 2,
+    // The most expensive draw on the page, and the least sensitive to latency:
+    // adding 240 marks to a 60,000-mark cloud changes nothing a person can see.
+    // 20Hz keeps it feeling live while freeing ~two thirds of its budget.
+    maxFps: 20,
   });
 
   return (

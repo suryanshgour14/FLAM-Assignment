@@ -7,6 +7,10 @@
   flex-direction: column;
   min-width: 0;
   min-height: 0;
+  /* Must fill the grid cell. Without this the card sizes to its header and
+     legend, `.plot` (flex: 1 with min-height: 0) resolves to zero, and the
+     canvas silently stays at its default 300×150 with nothing ever drawn. */
+  height: 100%;
   background: linear-gradient(180deg, var(--bg-panel) 0%, var(--bg-sunken) 100%);
   border: 1px solid var(--border-subtle);
   border-radius: var(--radius-lg);

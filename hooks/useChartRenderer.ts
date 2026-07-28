@@ -27,6 +27,20 @@ export interface UseChartRendererOptions {
   opaque?: boolean;
   /** Lower runs first. Keeps the big line chart ahead of the sparklines. */
   priority?: number;
+  /**
+   * Redraw ceiling for this chart, in frames per second.
+   *
+   * Not every chart needs to repaint at display rate. A density heatmap whose
+   * cells each average hundreds of samples looks *identical* between
+   * consecutive frames — repainting it 60 times a second spends real budget to
+   * produce no visible change. Capping the expensive, slow-changing charts is
+   * what leaves headroom for the line chart (which is being dragged, and does
+   * need every frame) to stay smooth.
+   *
+   * This throttles the *chart*, not the page. The page stays at 60fps; that's
+   * the whole point.
+   */
+  maxFps?: number;
   enabled?: boolean;
 }
 
@@ -55,6 +69,7 @@ export function useChartRenderer({
   revision,
   opaque = false,
   priority = 0,
+  maxFps = 0,
   enabled = true,
 }: UseChartRendererOptions): ChartSurface {
   const containerRef = useRef<HTMLDivElement | null>(null);
@@ -150,9 +165,16 @@ export function useChartRenderer({
   useEffect(() => {
     if (!enabled) return;
 
+    const minInterval = maxFps > 0 ? 1000 / maxFps : 0;
+    let lastDrawAt = 0;
+
     const run = (frame: FrameInfo) => {
       const canvas = canvasRef.current;
       if (!canvas || !visibleRef.current) return;
+
+      // A forced repaint (hover, zoom, resize) always wins — the cap exists to
+      // skip *redundant* frames, not to make interaction feel sluggish.
+      if (minInterval > 0 && !forceRef.current && frame.now - lastDrawAt < minInterval) return;
 
       const { width, height } = sizeRef.current;
       if (width <= 0 || height <= 0) return;
@@ -171,6 +193,7 @@ export function useChartRenderer({
 
       lastRevision.current = rev;
       forceRef.current = false;
+      lastDrawAt = frame.now;
 
       const t0 = performance.now();
       // Reset then scale, so DPR changes never compound across frames.
@@ -180,7 +203,7 @@ export function useChartRenderer({
     };
 
     return scheduler.register(run, priority);
-  }, [enabled, opaque, priority]);
+  }, [enabled, opaque, priority, maxFps]);
 
   // Dropping the context reference on unmount lets the backing surface go.
   useEffect(

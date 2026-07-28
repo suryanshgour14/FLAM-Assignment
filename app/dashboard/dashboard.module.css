@@ -174,21 +174,34 @@
   min-width: 0;
 }
 
+/* Grid cells are flex containers so the card inside stretches to fill them.
+   `min-height` alone isn't enough — the card would size to its own content and
+   leave the plot area at zero height. */
+.chartCell {
+  min-height: 268px;
+  min-width: 0;
+  display: flex;
+}
+
+.chartCell > * {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
 /* The line chart earns the full width — it is the one people read. */
 .spanFull {
   grid-column: 1 / -1;
-  min-height: 320px;
+  min-height: 340px;
+  display: flex;
 }
 
-.chartCell {
-  min-height: 268px;
+.spanFull > * {
+  flex: 1 1 auto;
   min-width: 0;
 }
 
 .tableCell {
   min-height: 320px;
-  display: flex;
-  flex-direction: column;
 }
 
 /* Responsive -------------------------------------------------------------- */
