@@ -1,0 +1,335 @@
+.panel {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+
+.section {
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+}
+
+.sectionHead {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.label {
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-faint);
+}
+
+.labelAction {
+  font-size: 10px;
+  color: var(--text-muted);
+  letter-spacing: 0.02em;
+  transition: color 0.15s ease;
+}
+
+.labelAction:hover {
+  color: var(--accent);
+}
+
+/* Segmented control ------------------------------------------------------- */
+
+.segmented {
+  display: flex;
+  gap: 2px;
+  padding: 3px;
+  background: var(--bg-input);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius);
+}
+
+.segment {
+  flex: 1 1 0;
+  min-width: 0;
+  padding: 5px 4px;
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--text-muted);
+  border-radius: 6px;
+  text-align: center;
+  transition:
+    background 0.15s ease,
+    color 0.15s ease;
+  white-space: nowrap;
+}
+
+.segment:hover:not(.segmentActive) {
+  color: var(--text-secondary);
+  background: rgba(148, 163, 184, 0.06);
+}
+
+.segmentActive {
+  background: var(--bg-elevated);
+  color: var(--text-primary);
+  box-shadow: var(--shadow-sm);
+}
+
+/* Channel toggles --------------------------------------------------------- */
+
+.channels {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.channel {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 6px 8px;
+  border-radius: var(--radius-sm);
+  font-size: 12px;
+  color: var(--text-muted);
+  text-align: left;
+  width: 100%;
+  transition:
+    background 0.14s ease,
+    color 0.14s ease;
+}
+
+.channel:hover {
+  background: rgba(148, 163, 184, 0.05);
+  color: var(--text-secondary);
+}
+
+.channelOn {
+  color: var(--text-primary);
+}
+
+.dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex: 0 0 auto;
+  transition:
+    box-shadow 0.18s ease,
+    opacity 0.18s ease;
+  opacity: 0.28;
+}
+
+.channelOn .dot {
+  opacity: 1;
+}
+
+.channelName {
+  flex: 1 1 auto;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.channelValue {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  font-size: 10px;
+  color: var(--text-faint);
+  flex: 0 0 auto;
+}
+
+.channelOn .channelValue {
+  color: var(--text-muted);
+}
+
+/* Search ------------------------------------------------------------------ */
+
+.searchWrap {
+  position: relative;
+}
+
+.search {
+  width: 100%;
+  padding: 7px 10px 7px 28px;
+  font-size: 12px;
+  background: var(--bg-input);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius);
+  color: var(--text-primary);
+  transition: border-color 0.15s ease;
+}
+
+.search::placeholder {
+  color: var(--text-faint);
+}
+
+.search:focus {
+  outline: none;
+  border-color: var(--accent-dim);
+  box-shadow: 0 0 0 3px rgba(110, 168, 254, 0.08);
+}
+
+.searchIcon {
+  position: absolute;
+  left: 9px;
+  top: 50%;
+  transform: translateY(-50%);
+  color: var(--text-faint);
+  pointer-events: none;
+  display: flex;
+}
+
+/* Sliders ----------------------------------------------------------------- */
+
+.slider {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.sliderHead {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.sliderValue {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  color: var(--text-secondary);
+  font-size: 11px;
+}
+
+/* Buttons ----------------------------------------------------------------- */
+
+.buttonRow {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px;
+}
+
+.btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 7px 10px;
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--text-secondary);
+  background: var(--bg-input);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius);
+  transition:
+    background 0.15s ease,
+    border-color 0.15s ease,
+    color 0.15s ease;
+}
+
+.btn:hover {
+  color: var(--text-primary);
+  border-color: var(--border);
+  background: var(--bg-panel-hi);
+}
+
+.btnPrimary {
+  color: var(--accent-hi);
+  background: var(--accent-dim);
+  border-color: rgba(110, 168, 254, 0.22);
+}
+
+.btnPrimary:hover {
+  background: rgba(110, 168, 254, 0.2);
+  border-color: rgba(110, 168, 254, 0.4);
+  color: #fff;
+}
+
+.btnDanger {
+  color: var(--bad);
+  background: rgba(248, 113, 113, 0.1);
+  border-color: rgba(248, 113, 113, 0.2);
+}
+
+.btnDanger:hover {
+  background: rgba(248, 113, 113, 0.18);
+  border-color: rgba(248, 113, 113, 0.38);
+  color: #fecaca;
+}
+
+.btnWide {
+  grid-column: 1 / -1;
+}
+
+.stressActive {
+  animation: pulse 1.6s ease-in-out infinite;
+}
+
+/* Presets ----------------------------------------------------------------- */
+
+.presets {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 5px;
+}
+
+.preset {
+  padding: 8px 6px;
+  border-radius: var(--radius-sm);
+  background: var(--bg-input);
+  border: 1px solid var(--border-subtle);
+  transition:
+    border-color 0.15s ease,
+    background 0.15s ease;
+  text-align: center;
+}
+
+.preset:hover {
+  border-color: var(--border);
+  background: var(--bg-panel-hi);
+}
+
+.presetActive {
+  border-color: rgba(110, 168, 254, 0.34);
+  background: var(--accent-dim);
+}
+
+.presetValue {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-primary);
+  display: block;
+}
+
+.presetLabel {
+  font-size: 9px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--text-faint);
+  display: block;
+  margin-top: 1px;
+}
+
+.note {
+  font-size: 10px;
+  line-height: 1.5;
+  color: var(--text-faint);
+}
+
+.pendingBadge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 9px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--accent);
+}
+
+.pendingDot {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--accent);
+  animation: pulse 0.9s ease-in-out infinite;
+}
