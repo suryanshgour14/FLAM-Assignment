@@ -2,10 +2,12 @@
 
 import { memo, useCallback, useMemo, useRef } from 'react';
 import styles from './chart.module.css';
-import { useDataStore, useFilters, useTimeWindow } from '@/components/providers/DataProvider';
+import { useDataStore, useFilters, useStoreRevision } from '@/components/providers/DataProvider';
+import { EmptyOverlay, Legend } from './ChartChrome';
 import { useChartRenderer, type RenderArgs } from '@/hooks/useChartRenderer';
 import { useChartInteraction } from '@/hooks/useChartInteraction';
 import { bucketChannel } from '@/lib/seriesBuffer';
+import { resolveWindow } from '@/lib/timeWindow';
 import { CATEGORY_META } from '@/lib/dataGenerator';
 import {
   CHART_INK,
@@ -55,14 +57,16 @@ function useScratch() {
 function LineChartImpl() {
   const { store } = useDataStore();
   const filters = useFilters();
-  const base = useTimeWindow();
   const scratch = useScratch();
 
   const invalidateRef = useRef<() => void>(() => {});
   const invalidate = useCallback(() => invalidateRef.current(), []);
 
   const interaction = useChartInteraction({
-    baseWindow: { from: base.from, to: base.to },
+    // The live window is resolved inside the frame loop rather than being
+    // handed down as React state — see lib/timeWindow.ts. Zoom and pan still
+    // override it; this is only the "follow live" fallback.
+    liveWindow: useCallback(() => resolveWindow(store, filters.timeRange), [store, filters.timeRange]),
     invalidate,
     padLeft: DEFAULT_PADDING.left,
     padRight: DEFAULT_PADDING.right,
@@ -85,9 +89,9 @@ function LineChartImpl() {
       const area = plotArea(width, height, DEFAULT_PADDING);
       if (area.width <= 0 || area.height <= 0) return;
 
-      const win = interaction.windowRef.current;
-      const { from, to } = win;
+      const { from, to } = interaction.current();
       const span = to - from;
+      if (span <= 0) return;
 
       // One bucket per physical pixel column, capped.
       const buckets = Math.min(MAX_BUCKETS, Math.max(2, Math.floor(area.width)));
@@ -253,7 +257,7 @@ function LineChartImpl() {
         ctx.restore();
       }
     },
-    [store, activeCategories, scratch, interaction.windowRef, interaction.hoverRef],
+    [store, activeCategories, scratch, interaction],
   );
 
   const surface = useChartRenderer({
@@ -265,10 +269,6 @@ function LineChartImpl() {
   });
   invalidateRef.current = surface.invalidate;
 
-  const hasData = store.pointCount > 0;
-  const win = interaction.window;
-  const spanLabel = formatSpan(win.to - win.from);
-
   return (
     <div className={styles.card}>
       <div className={styles.header}>
@@ -279,9 +279,7 @@ function LineChartImpl() {
           </div>
         </div>
         <div className={styles.headerMeta}>
-          <span className={`${styles.badge} ${interaction.isZoomed ? styles.badgeAccent : ''}`}>
-            {spanLabel}
-          </span>
+          <SpanBadge current={interaction.current} zoomed={interaction.isZoomed} />
           {interaction.isZoomed && (
             <button className={styles.resetBtn} onClick={interaction.reset} type="button">
               Reset
@@ -301,36 +299,55 @@ function LineChartImpl() {
         <div
           className={`${styles.cursorZone} ${interaction.isPanning ? styles.panning : ''}`}
           role="img"
-          aria-label={`Time series chart showing ${activeCategories.length} channels over ${spanLabel}`}
+          aria-label={`Time series chart showing ${activeCategories.length} channels`}
           {...interaction.bind}
         />
-        {!hasData && (
-          <div className={styles.empty}>
-            <div className={styles.emptyTitle}>Waiting for data</div>
-            <div>The stream is paused or the buffer was cleared.</div>
-          </div>
-        )}
-        {interaction.hover.active && hasData && (
+        <EmptyOverlay hint="The stream is paused or the buffer was cleared." />
+        {interaction.hover.active && (
           <HoverTooltip
             x={interaction.hover.x}
             y={interaction.hover.y}
             plotWidth={surface.size.width}
-            time={
-              win.from +
-              ((interaction.hover.x - DEFAULT_PADDING.left) /
-                Math.max(1, surface.size.width - DEFAULT_PADDING.left - DEFAULT_PADDING.right)) *
-                (win.to - win.from)
-            }
+            time={hoverTime(interaction.current(), interaction.hover.x, surface.size.width)}
             categories={activeCategories}
           />
         )}
         <div className={styles.hint}>scroll · drag · dbl-click</div>
       </div>
 
-      <Legend categories={activeCategories} latest={latestRef} />
+      <Legend categories={activeCategories} showValues />
     </div>
   );
 }
+
+/** Maps a pointer x (CSS px, relative to the plot element) back to a timestamp. */
+function hoverTime(win: { from: number; to: number }, x: number, plotWidth: number): number {
+  const inner = Math.max(1, plotWidth - DEFAULT_PADDING.left - DEFAULT_PADDING.right);
+  const ratio = (x - DEFAULT_PADDING.left) / inner;
+  return win.from + ratio * (win.to - win.from);
+}
+
+/**
+ * The visible span label.
+ *
+ * Its own subscriber so it can track the live window without the chart shell
+ * re-rendering — the same trade as everything in ChartChrome.
+ */
+const SpanBadge = memo(function SpanBadge({
+  current,
+  zoomed,
+}: {
+  current: () => { from: number; to: number };
+  zoomed: boolean;
+}) {
+  useStoreRevision();
+  const win = current();
+  return (
+    <span className={`${styles.badge} ${zoomed ? styles.badgeAccent : ''}`}>
+      {formatSpan(win.to - win.from)}
+    </span>
+  );
+});
 
 /**
  * Split out and memoised so the tooltip's ~60Hz position updates repaint only
@@ -383,35 +400,6 @@ const HoverTooltip = memo(function HoverTooltip({
           </span>
         </div>
       ))}
-    </div>
-  );
-});
-
-const Legend = memo(function Legend({
-  categories,
-  latest,
-}: {
-  categories: Category[];
-  latest: React.RefObject<Record<string, number>>;
-}) {
-  return (
-    <div className={styles.legend}>
-      {categories.map((cat) => {
-        const meta = CATEGORY_META[cat];
-        const value = latest.current[cat];
-        return (
-          <span key={cat} className={styles.legendItem}>
-            <span className={styles.legendSwatch} style={{ background: meta.color }} />
-            {meta.label}
-            {value !== undefined && (
-              <span className={styles.legendValue}>
-                {formatValue(value)}
-                {meta.unit}
-              </span>
-            )}
-          </span>
-        );
-      })}
     </div>
   );
 });

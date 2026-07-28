@@ -2,7 +2,12 @@
 
 import { memo, useCallback } from 'react';
 import styles from './controls.module.css';
-import { useDashboardActions, useDataStore, useStream } from '@/components/providers/DataProvider';
+import {
+  useDashboardActions,
+  useDataStore,
+  useStoreRevision,
+  useStream,
+} from '@/components/providers/DataProvider';
 import { formatCount } from '@/lib/canvasUtils';
 import { CATEGORIES } from '@/lib/types';
 
@@ -29,34 +34,44 @@ const RATE_PRESETS = [
 ];
 
 function LoadControlsImpl() {
-  const { settings, stats } = useStream();
+  const { settings, stats, isBackfilling } = useStream();
   const { store } = useDataStore();
+  useStoreRevision();
   const actions = useDashboardActions();
 
   const totalCapacity = settings.capacity * CATEGORIES.length;
-
-  const setTotalCapacity = useCallback(
-    (total: number) => {
-      actions.setCapacity(Math.max(256, Math.round(total / CATEGORIES.length)));
-    },
-    [actions],
-  );
+  const perChannel = useCallback((total: number) => Math.max(256, Math.round(total / CATEGORIES.length)), []);
 
   return (
     <>
       <div className={styles.section}>
         <div className={styles.sectionHead}>
           <span className={styles.label}>Buffer size</span>
-          <span className={styles.sliderValue}>{formatCount(store.pointCount)} held</span>
+          {isBackfilling ? (
+            <span className={styles.pendingBadge}>
+              <span className={styles.pendingDot} />
+              filling
+            </span>
+          ) : (
+            <span className={styles.sliderValue}>{formatCount(store.pointCount)} held</span>
+          )}
         </div>
         <div className={styles.presets}>
           {CAPACITY_PRESETS.map((p) => (
             <button
               key={p.total}
               type="button"
+              // Stable hook for the benchmark harness — see scripts/benchmark.mjs.
+              // Selecting these by visible text is brittle: "50.0k" is a
+              // substring of the "250.0k" label and of the live "held" readout.
+              data-preset={p.total}
               className={`${styles.preset} ${totalCapacity === p.total ? styles.presetActive : ''}`}
-              onClick={() => setTotalCapacity(p.total)}
+              // Presets fill immediately. A buffer sized for 100k that holds 10k
+              // demonstrates nothing, and waiting 20 minutes for it to fill at
+              // the spec'd rate is not a demo.
+              onClick={() => actions.setCapacityAndFill(perChannel(p.total))}
               aria-pressed={totalCapacity === p.total}
+              disabled={isBackfilling}
             >
               <span className={styles.presetValue}>{formatCount(p.total)}</span>
               <span className={styles.presetLabel}>{p.label}</span>
@@ -75,7 +90,10 @@ function LoadControlsImpl() {
             max={400_000}
             step={2_000}
             value={totalCapacity}
-            onChange={(e) => setTotalCapacity(Number(e.target.value))}
+            // The slider only resizes — dragging it would otherwise kick off a
+            // backfill on every intermediate value.
+            onChange={(e) => actions.setCapacity(perChannel(Number(e.target.value)))}
+            onPointerUp={() => actions.setCapacityAndFill(perChannel(totalCapacity))}
             aria-label="Total buffer capacity in points"
           />
         </div>
@@ -122,6 +140,7 @@ function LoadControlsImpl() {
         <div className={styles.buttonRow}>
           <button
             type="button"
+            data-action="toggle-stream"
             className={`${styles.btn} ${settings.running ? '' : styles.btnPrimary}`}
             onClick={() => actions.setRunning(!settings.running)}
           >
@@ -140,6 +159,7 @@ function LoadControlsImpl() {
           </button>
           <button
             type="button"
+            data-action="stress"
             className={`${styles.btn} ${styles.btnWide} ${
               settings.stressMode ? `${styles.btnDanger} ${styles.stressActive}` : styles.btnPrimary
             }`}

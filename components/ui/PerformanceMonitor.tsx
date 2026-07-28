@@ -32,28 +32,44 @@ function PerformanceMonitorImpl() {
 
   return (
     <div className={styles.perf}>
+      {/* `data-metric` attributes are read by scripts/benchmark.mjs. Parsing
+          rendered text was fragile — "50.0k" appears in three unrelated places
+          on this page — and structured hooks make the numbers in
+          PERFORMANCE.md reproducible rather than anecdotal. */}
       <div className={styles.perfGrid}>
         <div className={styles.metric}>
           <div className={styles.metricLabel}>Frame rate</div>
-          <div className={`${styles.metricValue} ${styles[grade]}`}>
+          <div className={`${styles.metricValue} ${styles[grade]}`} data-metric="fps" data-value={m.fps}>
             {m.fps.toFixed(0)}
             <span className={styles.metricUnit}>fps</span>
           </div>
-          <div className={styles.metricSub}>{m.droppedFrames} dropped</div>
+          <div className={styles.metricSub} data-metric="dropped" data-value={m.droppedFrames}>
+            {m.droppedFrames} dropped
+          </div>
         </div>
 
         <div className={styles.metric}>
           <div className={styles.metricLabel}>Frame time p95</div>
-          <div className={`${styles.metricValue} ${styles[frameGrade]}`}>
+          <div
+            className={`${styles.metricValue} ${styles[frameGrade]}`}
+            data-metric="p95"
+            data-value={m.p95FrameMs}
+          >
             {m.p95FrameMs.toFixed(1)}
             <span className={styles.metricUnit}>ms</span>
           </div>
-          <div className={styles.metricSub}>worst {m.worstFrameMs.toFixed(0)}ms</div>
+          <div className={styles.metricSub} data-metric="worst" data-value={m.worstFrameMs}>
+            worst {m.worstFrameMs.toFixed(0)}ms
+          </div>
         </div>
 
         <div className={styles.metric}>
           <div className={styles.metricLabel}>{m.memorySupported ? 'JS heap' : 'Buffer memory'}</div>
-          <div className={styles.metricValue}>
+          <div
+            className={styles.metricValue}
+            data-metric="heap"
+            data-value={m.memorySupported ? m.memoryUsage : m.bufferBytes}
+          >
             {formatBytes(m.memorySupported ? m.memoryUsage : m.bufferBytes)}
           </div>
           <div className={styles.metricSub}>
@@ -63,8 +79,12 @@ function PerformanceMonitorImpl() {
 
         <div className={styles.metric}>
           <div className={styles.metricLabel}>Points held</div>
-          <div className={styles.metricValue}>{formatCount(store.pointCount)}</div>
-          <div className={styles.metricSub}>{formatCount(stats.pointsPerSecond)}/s in</div>
+          <div className={styles.metricValue} data-metric="points" data-value={store.pointCount}>
+            {formatCount(store.pointCount)}
+          </div>
+          <div className={styles.metricSub} data-metric="rate" data-value={stats.pointsPerSecond}>
+            {formatCount(stats.pointsPerSecond)}/s in
+          </div>
         </div>
       </div>
 
@@ -79,19 +99,29 @@ function PerformanceMonitorImpl() {
       <div>
         <div className={styles.perfRow}>
           <span>Canvas work / frame</span>
-          <span className={styles.perfRowValue}>{m.renderTime.toFixed(2)} ms</span>
+          <span className={styles.perfRowValue} data-metric="canvasMs" data-value={m.renderTime}>
+            {m.renderTime.toFixed(2)} ms
+          </span>
         </div>
         <div className={styles.perfRow}>
           <span>Data processing</span>
-          <span className={styles.perfRowValue}>{m.dataProcessingTime.toFixed(2)} ms</span>
+          <span className={styles.perfRowValue} data-metric="dataMs" data-value={m.dataProcessingTime}>
+            {m.dataProcessingTime.toFixed(2)} ms
+          </span>
         </div>
         <div className={styles.perfRow}>
           <span>Ingest per tick</span>
-          <span className={styles.perfRowValue}>{stats.lastTickMs.toFixed(2)} ms</span>
+          <span className={styles.perfRowValue} data-metric="ingestMs" data-value={stats.lastTickMs}>
+            {stats.lastTickMs.toFixed(2)} ms
+          </span>
         </div>
         <div className={styles.perfRow}>
           <span>Generation thread</span>
-          <span className={`${styles.perfRowValue} ${stats.workerActive ? styles.good : styles.ok}`}>
+          <span
+            className={`${styles.perfRowValue} ${stats.workerActive ? styles.good : styles.ok}`}
+            data-metric="thread"
+            data-value={stats.workerActive ? 'worker' : 'main'}
+          >
             {stats.workerActive ? 'Web Worker' : 'main thread'}
           </span>
         </div>

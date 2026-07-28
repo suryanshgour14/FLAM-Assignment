@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from 'react';
 import { Ema, FrameSampler, readHeap } from '@/lib/performanceUtils';
+import { perfBus } from '@/lib/perfBus';
 import { scheduler } from '@/lib/renderScheduler';
 import type { PerformanceMetrics } from '@/lib/types';
 
@@ -56,7 +57,6 @@ export function usePerformanceMonitor({
 
   const samplerRef = useRef<FrameSampler | null>(null);
   const renderEma = useRef(new Ema(0.15));
-  const processEma = useRef(new Ema(0.15));
   const historyRef = useRef(new Float32Array(HISTORY));
   const historyLen = useRef(0);
   const bufferBytesRef = useRef(bufferBytes);
@@ -99,23 +99,28 @@ export function usePerformanceMonitor({
         memoryUsage: heap.used,
         memoryLimit: heap.limit,
         renderTime: renderEma.current.value,
-        dataProcessingTime: processEma.current.value,
+        // Read off the bus rather than from User Timing entries — see
+        // lib/perfBus.ts for why the hot paths stopped emitting marks.
+        dataProcessingTime: perfBus.dataProcessing.value,
         droppedFrames: sampler.droppedFrames,
       });
     }, 100); // Priority 100 — measure after every chart has drawn.
 
+    // Captured now rather than read in the cleanup — by teardown the ref may
+    // already point at a different instance.
+    const ema = renderEma.current;
     return () => {
       unregister();
       samplerRef.current = null;
-      renderEma.current.reset();
-      processEma.current.reset();
+      ema.reset();
     };
   }, [enabled, reportIntervalMs]);
 
   /**
-   * Picks up `performance.measure('data-processing')` calls emitted by the
-   * stream hook and the worker bridge, so the "processing" figure is real
-   * User Timing data rather than something we guessed at.
+   * Picks up the coarse `performance.measure('data-…')` events — hydration and
+   * backfill. Those fire once or twice in the life of the page, so the observer
+   * is essentially free here; the per-tick timings come off the perf bus
+   * instead, for the reasons in lib/perfBus.ts.
    */
   useEffect(() => {
     if (!enabled || typeof PerformanceObserver === 'undefined') return;
@@ -124,7 +129,7 @@ export function usePerformanceMonitor({
       observer = new PerformanceObserver((list) => {
         for (const entry of list.getEntries()) {
           if (entry.entryType === 'measure' && entry.name.startsWith('data-')) {
-            processEma.current.push(entry.duration);
+            perfBus.recordDataProcessing(entry.duration);
           }
         }
       });

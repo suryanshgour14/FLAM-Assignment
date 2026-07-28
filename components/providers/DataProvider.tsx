@@ -55,6 +55,8 @@ interface ActionsValue {
   resetFilters: () => void;
   setRunning: (running: boolean) => void;
   setCapacity: (capacity: number) => void;
+  /** Resize and immediately fill with plausible history. */
+  setCapacityAndFill: (capacity: number) => void;
   setIntervalMs: (ms: number) => void;
   setBatchSize: (n: number) => void;
   toggleStressMode: () => void;
@@ -66,6 +68,8 @@ interface StreamValue {
   stats: StreamStats;
   /** True while a filter change is being applied off the urgent path. */
   isPending: boolean;
+  /** True while the buffer is being filled with backfilled history. */
+  isBackfilling: boolean;
 }
 
 const StoreContext = createContext<StoreValue | null>(null);
@@ -73,7 +77,12 @@ const FiltersContext = createContext<DashboardFilters | null>(null);
 const ActionsContext = createContext<ActionsValue | null>(null);
 const StreamContext = createContext<StreamValue | null>(null);
 
-const DEFAULT_CAPACITY = 12_500; // per channel × 8 channels = 100k point ceiling
+/**
+ * Per channel. × 8 channels = 10,000 points, which is the brief's baseline and
+ * exactly what the server-rendered seed fills. The load presets take it to 50k,
+ * 100k and 250k, each filling immediately via backfill.
+ */
+const DEFAULT_CAPACITY = 1_250;
 
 const DEFAULT_FILTERS: DashboardFilters = {
   categories: new Set<Category>(['cpu', 'memory', 'network', 'latency']),
@@ -154,7 +163,7 @@ export function DataProvider({ initialData, children }: DataProviderProps) {
     [initialData.values.length],
   );
 
-  const stats = useDataStream({
+  const stream = useDataStream({
     store,
     settings,
     seed: initialData.seed,
@@ -228,6 +237,21 @@ export function DataProvider({ initialData, children }: DataProviderProps) {
     [store, startTransition],
   );
 
+  /**
+   * Resize *and* fill.
+   *
+   * The preset buttons use this rather than a bare resize, because a buffer
+   * sized for 100k points that contains 10k is not a demonstration of anything.
+   */
+  const setCapacityAndFill = useCallback(
+    (capacity: number) => {
+      store.resize(capacity);
+      setSettings((prev) => ({ ...prev, capacity }));
+      stream.backfill(capacity);
+    },
+    [store, stream],
+  );
+
   const setIntervalMs = useCallback((ms: number) => {
     setSettings((prev) => ({ ...prev, intervalMs: ms }));
   }, []);
@@ -261,6 +285,7 @@ export function DataProvider({ initialData, children }: DataProviderProps) {
       resetFilters,
       setRunning,
       setCapacity,
+      setCapacityAndFill,
       setIntervalMs,
       setBatchSize,
       toggleStressMode,
@@ -276,6 +301,7 @@ export function DataProvider({ initialData, children }: DataProviderProps) {
       resetFilters,
       setRunning,
       setCapacity,
+      setCapacityAndFill,
       setIntervalMs,
       setBatchSize,
       toggleStressMode,
@@ -289,8 +315,8 @@ export function DataProvider({ initialData, children }: DataProviderProps) {
   );
 
   const streamValue = useMemo<StreamValue>(
-    () => ({ settings, stats, isPending }),
-    [settings, stats, isPending],
+    () => ({ settings, stats: stream, isPending, isBackfilling: stream.isBackfilling }),
+    [settings, stream, isPending],
   );
 
   return (

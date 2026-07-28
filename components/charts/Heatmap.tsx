@@ -2,8 +2,10 @@
 
 import { memo, useCallback, useMemo, useRef } from 'react';
 import styles from './chart.module.css';
-import { useDataStore, useFilters, useTimeWindow } from '@/components/providers/DataProvider';
+import { useDataStore, useFilters } from '@/components/providers/DataProvider';
+import { EmptyOverlay } from './ChartChrome';
 import { useChartRenderer, type RenderArgs } from '@/hooks/useChartRenderer';
+import { resolveWindow } from '@/lib/timeWindow';
 import { CATEGORY_META } from '@/lib/dataGenerator';
 import { CHART_INK, formatTime, heatColor, timeTicks } from '@/lib/canvasUtils';
 import { CATEGORIES, type Category } from '@/lib/types';
@@ -40,7 +42,6 @@ const MAX_COLS = 480;
 function HeatmapImpl() {
   const { store } = useDataStore();
   const filters = useFilters();
-  const window_ = useTimeWindow();
 
   /**
    * Scratch surface holding the cell-resolution buffer. Created once; at
@@ -67,8 +68,7 @@ function HeatmapImpl() {
       ctx.clearRect(0, 0, width, height);
       if (rows.length === 0 || width <= LABEL_W + 20 || height <= AXIS_H + 20) return;
 
-      const { from, to } = window_;
-      const span = to - from;
+      const { from, to, span } = resolveWindow(store, filters.timeRange);
       if (span <= 0) return;
 
       const plotX = LABEL_W;
@@ -194,7 +194,7 @@ function HeatmapImpl() {
         ctx.fillText(formatTime(t, span), x, plotH + 7);
       }
     },
-    [store, rows, window_],
+    [store, rows, filters.timeRange],
   );
 
   const surface = useChartRenderer({
@@ -225,11 +225,7 @@ function HeatmapImpl() {
           role="img"
           aria-label="Heatmap of channel intensity over time"
         />
-        {store.pointCount === 0 && (
-          <div className={styles.empty}>
-            <div className={styles.emptyTitle}>No samples in range</div>
-          </div>
-        )}
+        <EmptyOverlay title="No samples in range" />
       </div>
 
       <div className={styles.scale}>

@@ -47,14 +47,21 @@ function DataTableImpl() {
   /**
    * Newest-first merge across the selected channels.
    *
-   * Capped at 5,000 rows: nobody scrolls past that, and building the index
-   * itself is the one O(n) step left in this component. The cap is surfaced in
-   * the header so the number on screen is never quietly wrong.
+   * The cap started at 5,000 and had to come down hard. Rebuilding the index is
+   * the one O(n) step left in this component, and at 5,000 it was the single
+   * most expensive thing on the page under stress — profiling showed the table
+   * alone adding ~33ms to the median frame. Which is absurd for a view of a
+   * stream that replaces its own contents 15,000 times a second: rows below the
+   * first few hundred are stale before anyone could scroll to them.
+   *
+   * 750 rows is ~25 screens of scrollback and rebuilds in well under a
+   * millisecond. The cap is surfaced in the header so the count on screen is
+   * never quietly wrong.
    */
   const rows = useMemo<RowRef[]>(() => {
     const cats = CATEGORIES.filter((c) => filters.categories.has(c)) as Category[];
     const out: RowRef[] = [];
-    const LIMIT = 5_000;
+    const LIMIT = 750;
 
     // Per-channel cursors walking backwards from the newest sample.
     const cursors = cats.map((cat) => {
@@ -112,7 +119,7 @@ function DataTableImpl() {
           )}
           <span className={styles.chip}>
             {formatCount(rows.length)}
-            {rows.length >= 5_000 ? '+' : ''} rows
+            {rows.length >= 750 ? '+' : ''} rows
           </span>
           <span className={styles.chip}>{v.endIndex - v.startIndex} rendered</span>
           <button

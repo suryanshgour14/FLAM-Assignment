@@ -16,8 +16,15 @@ export interface HoverState {
 }
 
 export interface UseChartInteractionOptions {
-  /** The live, auto-following window. Used whenever the user hasn't zoomed. */
-  baseWindow: TimeWindow;
+  /**
+   * Pulls the live, auto-following window on demand.
+   *
+   * A getter rather than a value: passing the window down as state meant the
+   * chart re-rendered every time it advanced, which is four times a second
+   * forever. Now the render loop asks for it, and React only gets involved when
+   * the user actually interacts.
+   */
+  liveWindow: () => TimeWindow;
   /** Repaint request — interaction changes pixels without changing data. */
   invalidate: () => void;
   /** Left inset in CSS px, so pointer x maps onto the plot area not the card. */
@@ -28,9 +35,7 @@ export interface UseChartInteractionOptions {
 
 export interface ChartInteraction {
   /** Resolved window: the user's zoom if they have one, otherwise the live one. */
-  window: TimeWindow;
-  /** Same value, readable from inside the render loop without a re-render. */
-  windowRef: React.RefObject<TimeWindow>;
+  current: () => TimeWindow;
   isZoomed: boolean;
   isPanning: boolean;
   hover: HoverState;
@@ -62,7 +67,7 @@ const MIN_SPAN_MS = 500;
  * Double-click, or the reset button, hands it back to the live feed.
  */
 export function useChartInteraction({
-  baseWindow,
+  liveWindow,
   invalidate,
   padLeft,
   padRight,
@@ -76,19 +81,11 @@ export function useChartInteraction({
   const overrideRef = useRef<TimeWindow | null>(null);
   const hoverRef = useRef<HoverState>({ x: 0, y: 0, active: false });
   const dragRef = useRef<{ pointerId: number; startX: number; window: TimeWindow } | null>(null);
-  const baseRef = useRef(baseWindow);
-  baseRef.current = baseWindow;
+  const liveRef = useRef(liveWindow);
+  liveRef.current = liveWindow;
 
-  const resolved = useMemo<TimeWindow>(
-    () => overrideRef.current ?? baseWindow,
-    // `isZoomed` is what tells us the override changed — the ref itself can't
-    // be a dependency.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [baseWindow, isZoomed],
-  );
-
-  const windowRef = useRef<TimeWindow>(resolved);
-  windowRef.current = overrideRef.current ?? baseWindow;
+  /** The window to draw: the user's zoom if they have one, else the live one. */
+  const current = useCallback((): TimeWindow => overrideRef.current ?? liveRef.current(), []);
 
   const reset = useCallback(() => {
     overrideRef.current = null;
@@ -113,7 +110,7 @@ export function useChartInteraction({
     const onWheel = (e: WheelEvent) => {
       e.preventDefault();
 
-      const win = windowRef.current;
+      const win = current();
       const span = win.to - win.from;
       const rect = el.getBoundingClientRect();
       const localX = clamp(e.clientX - rect.left - padLeft, 0, plotWidth());
@@ -125,8 +122,8 @@ export function useChartInteraction({
       const unit = e.deltaMode === 1 ? 16 : e.deltaMode === 2 ? 400 : 1;
       const factor = Math.exp((e.deltaY * unit) / 420);
 
-      const base = baseRef.current;
-      const maxSpan = Math.max(base.to - base.from, span);
+      const live = liveRef.current();
+      const maxSpan = Math.max(live.to - live.from, span);
       const nextSpan = clamp(span * factor, MIN_SPAN_MS, maxSpan * 8);
 
       // Keep the timestamp under the cursor pinned — zooming toward the pointer
@@ -140,7 +137,7 @@ export function useChartInteraction({
 
     el.addEventListener('wheel', onWheel, { passive: false });
     return () => el.removeEventListener('wheel', onWheel);
-  }, [enabled, invalidate, padLeft, plotWidth]);
+  }, [enabled, invalidate, padLeft, plotWidth, current]);
 
   const publishHover = useMemo(
     () =>
@@ -155,17 +152,18 @@ export function useChartInteraction({
   const onPointerDown = useCallback(
     (e: React.PointerEvent<HTMLDivElement>) => {
       if (!enabled || e.button !== 0) return;
-      const win = windowRef.current;
       dragRef.current = {
         pointerId: e.pointerId,
         startX: e.clientX,
-        window: { ...win },
+        // Snapshot at drag start so the pan is relative to a fixed origin —
+        // reading the live window mid-drag would compound the offset.
+        window: { ...current() },
       };
       // Capture so a fast drag that leaves the element still delivers moves.
       e.currentTarget.setPointerCapture(e.pointerId);
       setPanning(true);
     },
-    [enabled],
+    [enabled, current],
   );
 
   const onPointerMove = useCallback(
@@ -225,15 +223,5 @@ export function useChartInteraction({
     [onPointerDown, onPointerMove, endDrag, onPointerLeave, reset],
   );
 
-  return {
-    window: resolved,
-    windowRef,
-    isZoomed,
-    isPanning,
-    hover,
-    hoverRef,
-    reset,
-    bind,
-    plotRef,
-  };
+  return { current, isZoomed, isPanning, hover, hoverRef, reset, bind, plotRef };
 }

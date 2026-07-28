@@ -2,13 +2,14 @@
 
 import { memo, useCallback, useMemo, useRef } from 'react';
 import styles from './chart.module.css';
-import { useDataStore, useFilters, useTimeWindow } from '@/components/providers/DataProvider';
+import { useDataStore, useFilters } from '@/components/providers/DataProvider';
 import { useChartRenderer, type RenderArgs } from '@/hooks/useChartRenderer';
+import { EmptyOverlay, Legend, LiveBadge } from './ChartChrome';
 import { CATEGORY_META } from '@/lib/dataGenerator';
+import { resolveWindow } from '@/lib/timeWindow';
 import {
   DEFAULT_PADDING,
   drawGrid,
-  formatCount,
   formatTime,
   formatValue,
   linearTicks,
@@ -36,13 +37,23 @@ import type { Category } from '@/lib/types';
  *      pays nothing for the escape hatch.
  */
 
-/** Past this many marks we start striding, so the frame budget stays bounded. */
-const DENSITY_LIMIT = 60_000;
+/**
+ * Mark ceiling before striding kicks in.
+ *
+ * This started at 60,000 and had to come down. The throttle above spaces the
+ * draws out, but it does nothing about how expensive a single draw is — and one
+ * 60,000-`fillRect` pass was a ~40ms frame, which showed up as a p95 of 66ms
+ * even though the *average* canvas cost looked fine at 7ms. Averages hide
+ * exactly this shape of problem.
+ *
+ * 30,000 marks into a ~700×300 plot is already several marks per pixel; the
+ * cloud is visually identical and the peak frame halves.
+ */
+const DENSITY_LIMIT = 30_000;
 
 function ScatterPlotImpl() {
   const { store } = useDataStore();
   const filters = useFilters();
-  const window_ = useTimeWindow();
   const drawnRef = useRef(0);
 
   const activeCategories = useMemo(
@@ -56,8 +67,9 @@ function ScatterPlotImpl() {
       const area = plotArea(width, height, DEFAULT_PADDING);
       if (area.width <= 0 || area.height <= 0) return;
 
-      const { from, to } = window_;
-      const span = to - from;
+      // Resolved here rather than in a hook — see lib/timeWindow.ts. This is
+      // what keeps the component out of React's 4Hz update path entirely.
+      const { from, to, span } = resolveWindow(store, filters.timeRange);
       if (span <= 0) return;
 
       const extent = store.valueExtent(activeCategories, from, to);
@@ -134,7 +146,7 @@ function ScatterPlotImpl() {
 
       drawnRef.current = drawnTotal;
     },
-    [store, activeCategories, window_],
+    [store, activeCategories, filters.timeRange],
   );
 
   const surface = useChartRenderer({
@@ -155,7 +167,7 @@ function ScatterPlotImpl() {
           <div className={styles.subtitle}>Every retained sample · additive blending</div>
         </div>
         <div className={styles.headerMeta}>
-          <span className={styles.badge}>{formatCount(drawnRef.current)} marks</span>
+          <LiveBadge valueRef={drawnRef} suffix="marks" />
         </div>
       </div>
 
@@ -166,29 +178,10 @@ function ScatterPlotImpl() {
           role="img"
           aria-label="Scatter plot of individual samples over time"
         />
-        {store.pointCount === 0 && (
-          <div className={styles.empty}>
-            <div className={styles.emptyTitle}>No samples in range</div>
-          </div>
-        )}
+        <EmptyOverlay title="No samples in range" />
       </div>
 
-      <div className={styles.legend}>
-        {activeCategories.map((cat) => (
-          <span key={cat} className={styles.legendItem}>
-            <span
-              className={styles.legendSwatch}
-              style={{
-                background: CATEGORY_META[cat].color,
-                width: 7,
-                height: 7,
-                borderRadius: '50%',
-              }}
-            />
-            {CATEGORY_META[cat].label}
-          </span>
-        ))}
-      </div>
+      <Legend categories={activeCategories} shape="dot" />
     </div>
   );
 }

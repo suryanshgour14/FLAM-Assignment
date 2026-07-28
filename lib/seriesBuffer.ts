@@ -129,12 +129,21 @@ export interface Extent {
  */
 export class DataStore {
   readonly channels: Record<Category, ChannelBuffer>;
+  /**
+   * The same buffers, indexed positionally.
+   *
+   * The ingest loop receives category *indices* from the worker, and going
+   * `channels[CATEGORIES[i]]` turns every write into a string hash lookup. At
+   * the spec'd rate that's irrelevant; at 15,000 writes a second it isn't.
+   */
+  readonly channelList: ChannelBuffer[];
   /** Bumped on every write. Renderers diff this to skip redundant frames. */
   version = 0;
   totalIngested = 0;
   lastWriteAt = 0;
 
   private listeners = new Set<() => void>();
+  private extentCache: { key: string; at: number; extent: Extent } | null = null;
   private notifyTimer: ReturnType<typeof setTimeout> | null = null;
   private notifyIntervalMs: number;
   private pendingNotify = false;
@@ -149,6 +158,12 @@ export class DataStore {
       },
       {} as Record<Category, ChannelBuffer>,
     );
+    this.channelList = CATEGORIES.map((c) => this.channels[c]);
+  }
+
+  /** Positional write for the ingest hot loop. */
+  pushAt(categoryIndex: number, timestamp: number, value: number): void {
+    this.channelList[categoryIndex].push(timestamp, value);
   }
 
   get capacity(): number {
@@ -175,6 +190,7 @@ export class DataStore {
 
   resize(capacity: number): void {
     for (const c of CATEGORIES) this.channels[c].resize(capacity);
+    this.extentCache = null;
     this.version += 1;
     this.flushNotify();
   }
@@ -182,6 +198,7 @@ export class DataStore {
   clear(): void {
     for (const c of CATEGORIES) this.channels[c].clear();
     this.totalIngested = 0;
+    this.extentCache = null;
     this.version += 1;
     this.flushNotify();
   }
@@ -203,11 +220,29 @@ export class DataStore {
     return { min, max };
   }
 
-  /** Value extent for a set of channels inside a time window. */
+  /**
+   * Value extent for a set of channels inside a time window.
+   *
+   * This is memoised, and it needs to be. Three charts each ask for the same
+   * extent on the same window, every frame — at 100k points in range that was
+   * 18 million comparisons a second doing nothing but recomputing an identical
+   * answer, and it was the single largest non-drawing cost in a profile.
+   *
+   * The cache is keyed on the exact query and expires after 100ms. Between
+   * refreshes the axis can be at most a few per cent stale, which is invisible
+   * next to the 8% headroom the charts add anyway — and it recomputes the
+   * moment the user zooms, because that changes the key.
+   */
   valueExtent(categories: Iterable<Category>, from: number, to: number): Extent {
+    const cats = Array.from(categories);
+    const key = `${cats.join(',')}|${from}|${to}`;
+    const now = this.clock();
+    const hit = this.extentCache;
+    if (hit && hit.key === key && now - hit.at < 100) return hit.extent;
+
     let min = Number.POSITIVE_INFINITY;
     let max = Number.NEGATIVE_INFINITY;
-    for (const c of categories) {
+    for (const c of cats) {
       const ch = this.channels[c];
       if (ch.size === 0) continue;
       const start = ch.lowerBound(from);
@@ -218,9 +253,18 @@ export class DataStore {
         if (v > max) max = v;
       }
     }
-    if (min === Number.POSITIVE_INFINITY) return { min: 0, max: 1 };
-    if (min === max) return { min: min - 1, max: max + 1 };
-    return { min, max };
+
+    let extent: Extent;
+    if (min === Number.POSITIVE_INFINITY) extent = { min: 0, max: 1 };
+    else if (min === max) extent = { min: min - 1, max: max + 1 };
+    else extent = { min, max };
+
+    this.extentCache = { key, at: now, extent };
+    return extent;
+  }
+
+  private clock(): number {
+    return typeof performance !== 'undefined' ? performance.now() : Date.now();
   }
 
   approximateBytes(): number {

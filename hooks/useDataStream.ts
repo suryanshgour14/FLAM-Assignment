@@ -1,8 +1,9 @@
 'use client';
 
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { CATEGORIES, type Category, type StreamSettings } from '@/lib/types';
+import { CATEGORIES, type StreamSettings } from '@/lib/types';
 import { createWalkers, type SeriesWalker } from '@/lib/dataGenerator';
+import { perfBus } from '@/lib/perfBus';
 import type { DataStore } from '@/lib/seriesBuffer';
 import type { GeneratedBatch, WorkerRequest } from '@/lib/workers/stream.worker';
 
@@ -22,6 +23,18 @@ export interface UseDataStreamOptions {
   /** Start tick offset so the client stream continues the server's series. */
   startTick: number;
   onBatch?: (count: number) => void;
+}
+
+export interface StreamControls {
+  /**
+   * Fill the buffer to capacity with plausible history immediately.
+   *
+   * Raising the buffer to 100k at the spec'd 80 points/second would otherwise
+   * take twenty minutes to show anything, which means the load controls would
+   * be untestable in a demo.
+   */
+  backfill: (perCategory: number) => void;
+  isBackfilling: boolean;
 }
 
 const IDLE_STATS: StreamStats = {
@@ -51,8 +64,9 @@ export function useDataStream({
   seed,
   startTick,
   onBatch,
-}: UseDataStreamOptions): StreamStats {
+}: UseDataStreamOptions): StreamStats & StreamControls {
   const [stats, setStats] = useState<StreamStats>(IDLE_STATS);
+  const [isBackfilling, setBackfilling] = useState(false);
 
   const workerRef = useRef<Worker | null>(null);
   const workerReady = useRef(false);
@@ -64,6 +78,7 @@ export function useDataStream({
   const tickCount = useRef(0);
   const onBatchRef = useRef(onBatch);
   onBatchRef.current = onBatch;
+  const backfillFrame = useRef<number | null>(null);
 
   // Live mirror of settings, so the interval callback always reads current
   // values without the interval having to be torn down and recreated.
@@ -75,13 +90,14 @@ export function useDataStream({
     (timestamps: Float64Array, values: Float32Array, categories: Uint8Array, count: number) => {
       const t0 = performance.now();
       for (let i = 0; i < count; i += 1) {
-        const cat = CATEGORIES[categories[i]] as Category;
-        store.push(cat, timestamps[i], values[i]);
+        store.pushAt(categories[i], timestamps[i], values[i]);
       }
       store.commit(Date.now());
       ingestedInWindow.current += count;
       tickCount.current += 1;
-      lastTickMs.current = performance.now() - t0;
+      const elapsed = performance.now() - t0;
+      lastTickMs.current = elapsed;
+      perfBus.recordIngest(elapsed, count);
       onBatchRef.current?.(count);
     },
     [store],
@@ -109,20 +125,58 @@ export function useDataStream({
         return;
       }
       if (msg.type === 'batch') {
-        performance.mark('data-ingest-start');
+        // No performance.mark() here — see lib/perfBus.ts. At 62 ticks/second
+        // the User Timing calls cost more than the ingest they were timing.
+        perfBus.recordDataProcessing(msg.elapsedMs);
         ingest(
           new Float64Array(msg.timestamps),
           new Float32Array(msg.values),
           new Uint8Array(msg.categories),
           msg.count,
         );
-        try {
-          performance.measure('data-generate', 'data-ingest-start');
-        } catch {
-          /* mark may have been cleared; ignore */
-        }
-        performance.clearMarks('data-ingest-start');
-        performance.clearMeasures('data-generate');
+        // Hand the buffers straight back. The views above are detached by the
+        // transfer, which is fine — ingest has already copied everything into
+        // the ring buffers. This is what keeps the streaming path allocation-
+        // free in steady state; see the note on RecycleMessage.
+        worker.postMessage(
+          {
+            type: 'recycle',
+            timestamps: msg.timestamps,
+            values: msg.values,
+            categories: msg.categories,
+          } satisfies WorkerRequest,
+          [msg.timestamps, msg.values, msg.categories],
+        );
+        return;
+      }
+
+      if (msg.type === 'backfill-batch') {
+        // A 250k backfill written in one go is a ~120ms frame — visible as a
+        // hitch right when the user clicks. Spreading it over animation frames
+        // keeps every individual frame inside budget; the fill takes a few
+        // hundred milliseconds of wall clock and nobody notices.
+        const timestamps = new Float64Array(msg.timestamps);
+        const values = new Float32Array(msg.values);
+        const categories = new Uint8Array(msg.categories);
+        const CHUNK = 20_000;
+        let cursor = 0;
+
+        const step = () => {
+          const end = Math.min(msg.count, cursor + CHUNK);
+          for (let i = cursor; i < end; i += 1) {
+            store.pushAt(categories[i], timestamps[i], values[i]);
+          }
+          cursor = end;
+          store.commit(Date.now());
+          if (cursor < msg.count) {
+            backfillFrame.current = requestAnimationFrame(step);
+          } else {
+            backfillFrame.current = null;
+            if (msg.nextTick !== undefined) tickRef.current = msg.nextTick;
+            setBackfilling(false);
+          }
+        };
+        backfillFrame.current = requestAnimationFrame(step);
       }
     };
 
@@ -139,8 +193,14 @@ export function useDataStream({
       worker.onmessage = null;
       worker.onerror = null;
       worker.terminate();
+      // A backfill in flight holds a reference to the store through its rAF
+      // closure; leaving it scheduled past unmount is a leak with a heartbeat.
+      if (backfillFrame.current !== null) {
+        cancelAnimationFrame(backfillFrame.current);
+        backfillFrame.current = null;
+      }
     };
-  }, [seed, ingest]);
+  }, [seed, ingest, store]);
 
   // Main-thread walkers: both the fallback and what the worker's numbers must
   // match, so they share the same seed and constructor.
@@ -182,14 +242,18 @@ export function useDataStream({
       for (let s = 0; s < perCategory; s += 1) {
         const t = now - (perCategory - 1 - s) * (cfg.intervalMs / perCategory);
         for (let c = 0; c < walkers.length; c += 1) {
-          store.push(CATEGORIES[c], t, walkers[c].next(tick + s));
+          store.pushAt(c, t, walkers[c].next(tick + s));
         }
       }
       store.commit(now);
-      ingestedInWindow.current += perCategory * CATEGORIES.length;
+      const written = perCategory * CATEGORIES.length;
+      ingestedInWindow.current += written;
       tickCount.current += 1;
-      lastTickMs.current = performance.now() - t0;
-      onBatchRef.current?.(perCategory * CATEGORIES.length);
+      const elapsed = performance.now() - t0;
+      lastTickMs.current = elapsed;
+      perfBus.recordIngest(elapsed, written);
+      perfBus.recordDataProcessing(elapsed);
+      onBatchRef.current?.(written);
     };
 
     const id = setInterval(emit, settings.intervalMs);
@@ -220,5 +284,21 @@ export function useDataStream({
     return () => clearInterval(id);
   }, [store]);
 
-  return stats;
+  const backfill = useCallback(
+    (perCategory: number) => {
+      const worker = workerRef.current;
+      if (!worker || !workerReady.current || backfillFrame.current !== null) return;
+      setBackfilling(true);
+      store.clear();
+      worker.postMessage({
+        type: 'backfill',
+        perCategory,
+        endTime: Date.now(),
+        intervalMs: 100,
+      } satisfies WorkerRequest);
+    },
+    [store],
+  );
+
+  return { ...stats, backfill, isBackfilling };
 }

@@ -2,9 +2,11 @@
 
 import { memo, useCallback, useMemo, useRef } from 'react';
 import styles from './chart.module.css';
-import { useDataStore, useFilters, useTimeWindow } from '@/components/providers/DataProvider';
+import { useDataStore, useFilters } from '@/components/providers/DataProvider';
+import { EmptyOverlay, Legend } from './ChartChrome';
 import { useChartRenderer, type RenderArgs } from '@/hooks/useChartRenderer';
 import { bucketChannel } from '@/lib/seriesBuffer';
+import { resolveWindow } from '@/lib/timeWindow';
 import { CATEGORY_META } from '@/lib/dataGenerator';
 import {
   DEFAULT_PADDING,
@@ -38,7 +40,6 @@ const MAX_BARS = 128;
 function BarChartImpl() {
   const { store } = useDataStore();
   const filters = useFilters();
-  const window_ = useTimeWindow();
 
   const scratch = useRef({
     min: new Float32Array(MAX_BARS),
@@ -63,9 +64,8 @@ function BarChartImpl() {
       const area = plotArea(width, height, DEFAULT_PADDING);
       if (area.width <= 0 || area.height <= 0) return;
 
-      const from = window_.from;
-      const to = window_.to;
-      const span = to - from;
+      // Resolved inside the loop, not via a hook — see lib/timeWindow.ts.
+      const { from, to, span } = resolveWindow(store, filters.timeRange);
       if (span <= 0) return;
 
       // Every series gets a slot inside each group, so the bar count has to
@@ -161,7 +161,7 @@ function BarChartImpl() {
 
       ctx.restore();
     },
-    [store, activeCategories, aggregationMs, scratch, window_.from, window_.to],
+    [store, activeCategories, aggregationMs, scratch, filters.timeRange],
   );
 
   const surface = useChartRenderer({
@@ -197,24 +197,10 @@ function BarChartImpl() {
           role="img"
           aria-label="Bar chart of aggregated values per time bucket"
         />
-        {store.pointCount === 0 && (
-          <div className={styles.empty}>
-            <div className={styles.emptyTitle}>No samples in range</div>
-          </div>
-        )}
+        <EmptyOverlay title="No samples in range" />
       </div>
 
-      <div className={styles.legend}>
-        {activeCategories.map((cat) => (
-          <span key={cat} className={styles.legendItem}>
-            <span
-              className={styles.legendSwatch}
-              style={{ background: CATEGORY_META[cat].color, height: 8, width: 8, borderRadius: 2 }}
-            />
-            {CATEGORY_META[cat].label}
-          </span>
-        ))}
-      </div>
+      <Legend categories={activeCategories} shape="square" />
     </div>
   );
 }
