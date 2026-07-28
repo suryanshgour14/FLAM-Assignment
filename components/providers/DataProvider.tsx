@@ -114,15 +114,27 @@ export function DataProvider({ initialData, children }: DataProviderProps) {
    * Seed the client buffers from the server-rendered payload. Runs in an effect
    * rather than during render so it never fights hydration, and guards against
    * StrictMode's double-invoke duplicating every point.
+   *
+   * The timestamps get rebased onto the client clock on the way in. The page is
+   * ISR'd with a 30s window, so a cached response can be up to half a minute
+   * old — and since the live stream starts at the *client's* `Date.now()`, the
+   * un-shifted seed data would leave a visible dead zone between the last
+   * server point and the first live one. Shifting by the age of the payload
+   * closes the seam. It also corrects for client clock skew, which is a real
+   * problem on machines whose time is a few seconds out.
    */
   useEffect(() => {
     if (hydratedRef.current) return;
     hydratedRef.current = true;
     performance.mark('data-hydrate-start');
+
+    const now = Date.now();
+    const offset = now - initialData.generatedAt;
+
     for (const p of initialData.points) {
-      store.push(p.category as Category, p.timestamp, p.value);
+      store.push(p.category as Category, p.timestamp + offset, p.value);
     }
-    store.commit(Date.now());
+    store.commit(now);
     try {
       performance.measure('data-hydrate', 'data-hydrate-start');
     } catch {
