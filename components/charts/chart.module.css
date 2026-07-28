@@ -1,0 +1,312 @@
+/* Shared chrome for every chart card. One stylesheet rather than four almost
+   identical ones — the charts differ in what they paint, not in how they're framed. */
+
+.card {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  background: linear-gradient(180deg, var(--bg-panel) 0%, var(--bg-sunken) 100%);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-lg);
+  overflow: hidden;
+  box-shadow: var(--shadow-sm);
+  transition: border-color 0.18s ease;
+}
+
+.card:hover {
+  border-color: var(--border);
+}
+
+.header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 14px 10px;
+  border-bottom: 1px solid var(--border-subtle);
+  flex: 0 0 auto;
+}
+
+.headings {
+  min-width: 0;
+}
+
+.title {
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  color: var(--text-primary);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.subtitle {
+  font-size: 11px;
+  color: var(--text-muted);
+  margin-top: 2px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.headerMeta {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: 0 0 auto;
+}
+
+.badge {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  font-size: 10px;
+  letter-spacing: 0.02em;
+  color: var(--text-muted);
+  background: var(--bg-input);
+  border: 1px solid var(--border-subtle);
+  border-radius: 999px;
+  padding: 3px 8px;
+  white-space: nowrap;
+}
+
+.badgeAccent {
+  color: var(--accent);
+  border-color: var(--accent-dim);
+  background: var(--accent-dim);
+}
+
+.resetBtn {
+  font-size: 10px;
+  color: var(--text-muted);
+  background: var(--bg-input);
+  border: 1px solid var(--border-subtle);
+  border-radius: 999px;
+  padding: 3px 9px;
+  transition:
+    color 0.15s ease,
+    border-color 0.15s ease;
+}
+
+.resetBtn:hover {
+  color: var(--text-primary);
+  border-color: var(--border-strong);
+}
+
+/* The plot surface --------------------------------------------------------
+   `position: relative` + an absolutely positioned canvas is load-bearing: it
+   lets the container be measured by ResizeObserver without the canvas itself
+   contributing to layout. If the canvas participated in flow, every resize
+   would feed back into the measurement and oscillate. */
+
+.plot {
+  position: relative;
+  flex: 1 1 auto;
+  min-height: 0;
+  touch-action: none;
+}
+
+.canvas {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+
+/* The SVG interaction layer sits above the canvas. Crosshairs, hover markers
+   and the brush live here — a handful of nodes that change on pointer move,
+   which is exactly what SVG is good at, while the thousands of data marks stay
+   on canvas where the DOM would die. */
+.overlay {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+  overflow: visible;
+}
+
+.cursorZone {
+  position: absolute;
+  inset: 0;
+  cursor: crosshair;
+}
+
+.cursorZone.panning {
+  cursor: grabbing;
+}
+
+.tooltip {
+  position: absolute;
+  z-index: 5;
+  pointer-events: none;
+  min-width: 132px;
+  background: rgba(16, 18, 25, 0.94);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 8px 10px;
+  box-shadow: var(--shadow-lg);
+  animation: fadeUp 0.1s ease;
+}
+
+.tooltipTime {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--text-muted);
+  margin-bottom: 6px;
+  letter-spacing: 0.02em;
+}
+
+.tooltipRow {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 11px;
+  line-height: 1.7;
+}
+
+.tooltipDot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  flex: 0 0 auto;
+}
+
+.tooltipLabel {
+  color: var(--text-secondary);
+  flex: 1 1 auto;
+  white-space: nowrap;
+}
+
+.tooltipValue {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  color: var(--text-primary);
+  font-weight: 600;
+}
+
+.tooltipUnit {
+  color: var(--text-faint);
+  font-size: 10px;
+  margin-left: 1px;
+}
+
+/* Legend ------------------------------------------------------------------- */
+
+.legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+  padding: 8px 14px 10px;
+  border-top: 1px solid var(--border-subtle);
+  flex: 0 0 auto;
+}
+
+.legendItem {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  color: var(--text-secondary);
+  padding: 2px 0;
+  transition: opacity 0.15s ease;
+}
+
+.legendItem:hover {
+  color: var(--text-primary);
+}
+
+.legendSwatch {
+  width: 10px;
+  height: 3px;
+  border-radius: 2px;
+  flex: 0 0 auto;
+}
+
+.legendValue {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  font-size: 10px;
+  color: var(--text-muted);
+  margin-left: 2px;
+}
+
+/* Empty / error states ---------------------------------------------------- */
+
+.empty {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  text-align: center;
+  color: var(--text-muted);
+  font-size: 12px;
+  padding: 20px;
+  gap: 6px;
+}
+
+.emptyTitle {
+  color: var(--text-secondary);
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.hint {
+  position: absolute;
+  right: 10px;
+  bottom: 8px;
+  font-size: 10px;
+  color: var(--text-faint);
+  background: rgba(8, 9, 13, 0.7);
+  border-radius: 5px;
+  padding: 2px 7px;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.2s ease;
+}
+
+.plot:hover .hint {
+  opacity: 1;
+}
+
+/* The colour scale strip under the heatmap. */
+.scale {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 14px 10px;
+  border-top: 1px solid var(--border-subtle);
+  font-size: 10px;
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+}
+
+.scaleBar {
+  flex: 1 1 auto;
+  height: 6px;
+  border-radius: 999px;
+  background: linear-gradient(
+    90deg,
+    #101a2e,
+    #173a5e,
+    #1e6f8f,
+    #2dd4bf,
+    #a3e635,
+    #f5a524,
+    #f87171
+  );
+}
+
+@media (max-width: 720px) {
+  .subtitle {
+    display: none;
+  }
+  .header {
+    padding: 10px 12px 8px;
+  }
+}
