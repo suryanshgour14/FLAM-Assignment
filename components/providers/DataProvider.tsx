@@ -16,6 +16,7 @@ import { DataStore } from '@/lib/seriesBuffer';
 import { useDataStream, type StreamStats } from '@/hooks/useDataStream';
 import {
   CATEGORIES,
+  forEachSnapshotPoint,
   type AggregationWindow,
   type Category,
   type DashboardFilters,
@@ -131,9 +132,9 @@ export function DataProvider({ initialData, children }: DataProviderProps) {
     const now = Date.now();
     const offset = now - initialData.generatedAt;
 
-    for (const p of initialData.points) {
-      store.push(p.category as Category, p.timestamp + offset, p.value);
-    }
+    forEachSnapshotPoint(initialData, (category, timestamp, value) => {
+      store.push(category, timestamp + offset, value);
+    });
     store.commit(now);
     try {
       performance.measure('data-hydrate', 'data-hydrate-start');
@@ -149,8 +150,8 @@ export function DataProvider({ initialData, children }: DataProviderProps) {
   // The initial payload ends "now"; continue the walk from where it stopped so
   // there's no step change at the seam.
   const startTick = useMemo(
-    () => Math.ceil(initialData.points.length / CATEGORIES.length),
-    [initialData.points.length],
+    () => Math.ceil(initialData.values.length / CATEGORIES.length),
+    [initialData.values.length],
   );
 
   const stats = useDataStream({

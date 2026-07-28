@@ -1,9 +1,8 @@
 import type { Metadata } from 'next';
 import { DataProvider } from '@/components/providers/DataProvider';
 import { Dashboard } from '@/components/Dashboard';
-import { generateDataset } from '@/lib/dataGenerator';
+import { generateSnapshot } from '@/lib/dataGenerator';
 import { DEFAULT_SEED, INITIAL_POINT_COUNT } from '@/lib/chartConfig';
-import type { DatasetSnapshot } from '@/lib/types';
 
 /**
  * The dashboard page — a Server Component.
@@ -14,10 +13,14 @@ import type { DatasetSnapshot } from '@/lib/types';
  * fetches, and then paints, which means an empty chart frame the user actually
  * sees. Here the first paint already has a full dataset behind it.
  *
- * Note what is *not* here: no `fetch` to our own `/api/data` route. A Server
- * Component calling its own route handler is a network round trip to reach a
- * function that is already in the same process. The route handler exists for
- * clients; the page calls the generator directly.
+ * Two things are deliberately absent:
+ *
+ *   - No `fetch` to our own `/api/data` route. A Server Component calling its
+ *     own route handler is a network round trip to reach a function already in
+ *     the same process. The route handler exists for clients.
+ *   - No `DataPoint[]`. The payload is the compact columnar form — see
+ *     `DatasetSnapshot`. Shipping objects put 750 KB of HTML on the critical
+ *     path; this is about 70 KB for the same data.
  */
 
 export const metadata: Metadata = {
@@ -33,20 +36,11 @@ export const metadata: Metadata = {
 export const revalidate = 30;
 
 export default async function DashboardPage() {
-  const started = performance.now();
-
-  const points = generateDataset({
+  const initialData = generateSnapshot({
     count: INITIAL_POINT_COUNT,
     seed: DEFAULT_SEED,
     intervalMs: 100,
   });
-
-  const initialData: DatasetSnapshot = {
-    points,
-    generatedAt: Date.now(),
-    seed: DEFAULT_SEED,
-    generationMs: Math.round((performance.now() - started) * 100) / 100,
-  };
 
   return (
     <DataProvider initialData={initialData}>

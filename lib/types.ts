@@ -127,10 +127,50 @@ export interface AggregatedBucket {
   count: number;
 }
 
+/**
+ * The server→client seed payload.
+ *
+ * This started life as `DataPoint[]` and the dashboard's HTML came out at
+ * 750 KB, because `{"timestamp":1785274688778,"value":45.41,"category":"cpu"}`
+ * is ~58 bytes and there are ten thousand of them. Every one of those bytes is
+ * on the critical path for first paint.
+ *
+ * The fix is to send only what isn't derivable. Samples are emitted round-robin
+ * across `CATEGORIES` at a fixed interval, so for point `i`:
+ *
+ *   category  = CATEGORIES[i % CATEGORIES.length]
+ *   timestamp = startTime + floor(i / CATEGORIES.length) * intervalMs
+ *
+ * Which leaves a flat array of values — about 60 KB for the same 10k points,
+ * roughly a 10× reduction, with no information lost.
+ *
+ * The `/api/data` route still speaks `DataPoint[]`. That's a public contract
+ * where legibility beats byte count; this is an internal transport where the
+ * opposite is true.
+ */
 export interface DatasetSnapshot {
-  points: DataPoint[];
+  /** Values in emission order. See the derivation above. */
+  values: number[];
+  /** Timestamp of the first sample. */
+  startTime: number;
+  intervalMs: number;
   generatedAt: number;
   seed: number;
-  /** Wall-clock the server spent generating — surfaced in the UI as a nice touch. */
+  /** Wall-clock the server spent generating — surfaced in the UI. */
   generationMs: number;
+}
+
+/**
+ * Walks a snapshot back into (category, timestamp, value) triples without
+ * materialising a single intermediate object.
+ */
+export function forEachSnapshotPoint(
+  snapshot: DatasetSnapshot,
+  visit: (category: Category, timestamp: number, value: number) => void,
+): void {
+  const n = CATEGORIES.length;
+  const { values, startTime, intervalMs } = snapshot;
+  for (let i = 0; i < values.length; i += 1) {
+    visit(CATEGORIES[i % n], startTime + Math.floor(i / n) * intervalMs, values[i]);
+  }
 }

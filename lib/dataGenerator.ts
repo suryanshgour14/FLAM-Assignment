@@ -1,4 +1,10 @@
-import { CATEGORIES, type Category, type CategoryMeta, type DataPoint } from './types';
+import {
+  CATEGORIES,
+  type Category,
+  type CategoryMeta,
+  type DataPoint,
+  type DatasetSnapshot,
+} from './types';
 
 /**
  * Seeded time-series generation.
@@ -216,29 +222,41 @@ export function generateDataset({
 }
 
 /**
- * Columnar variant. Same numbers, but written straight into typed arrays so the
- * client never materialises the intermediate objects. This is what the stream
- * hook calls every tick.
+ * Compact variant for the server→client seed payload.
+ *
+ * Emits only the values; timestamps and categories are derivable from the
+ * index (see `DatasetSnapshot`). Same numbers as `generateDataset`, about a
+ * tenth of the serialised bytes.
  */
-export function fillBatch(
-  walkers: SeriesWalker[],
-  tick: number,
-  timestamp: number,
-  outTimestamps: Float64Array,
-  outValues: Float32Array,
-  outCategories: Uint8Array,
-  offset: number,
-): number {
-  let written = 0;
-  for (let i = 0; i < walkers.length; i += 1) {
-    const idx = offset + written;
-    if (idx >= outTimestamps.length) break;
-    outTimestamps[idx] = timestamp;
-    outValues[idx] = walkers[i].next(tick);
-    outCategories[idx] = i;
-    written += 1;
+export function generateSnapshot({
+  count,
+  seed = 20240607,
+  endTime,
+  intervalMs = 100,
+}: GenerateOptions): DatasetSnapshot {
+  const started = typeof performance !== 'undefined' ? performance.now() : 0;
+  const end = endTime ?? Date.now();
+  const walkers = createWalkers(seed);
+  const n = CATEGORIES.length;
+
+  const steps = Math.ceil(count / n);
+  const values: number[] = new Array(count);
+
+  for (let i = 0; i < count; i += 1) {
+    const catIdx = i % n;
+    const step = Math.floor(i / n);
+    values[i] = round2(walkers[catIdx].next(step));
   }
-  return written;
+
+  return {
+    values,
+    startTime: end - steps * intervalMs,
+    intervalMs,
+    generatedAt: end,
+    seed,
+    generationMs:
+      typeof performance !== 'undefined' ? Math.round((performance.now() - started) * 100) / 100 : 0,
+  };
 }
 
 export function createWalkers(seed: number): SeriesWalker[] {

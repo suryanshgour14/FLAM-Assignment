@@ -1,6 +1,6 @@
 import { NextResponse, type NextRequest } from 'next/server';
 import { generateDataset } from '@/lib/dataGenerator';
-import { CATEGORIES, type Category, type DatasetSnapshot } from '@/lib/types';
+import { CATEGORIES, type Category } from '@/lib/types';
 
 /**
  * Seed dataset endpoint.
@@ -47,7 +47,11 @@ export async function GET(request: NextRequest) {
 
   const points = generateDataset({ count, seed, intervalMs, categories });
 
-  const payload: DatasetSnapshot = {
+  // Note this returns the explicit `DataPoint[]` form rather than the compact
+  // columnar snapshot the dashboard page uses internally. This is a public
+  // contract — anyone curling it should get something self-describing, and the
+  // response is gzipped on the wire anyway.
+  const payload = {
     points,
     generatedAt: Date.now(),
     seed,
