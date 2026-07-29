@@ -1,5 +1,7 @@
 # Pulse — Real-time Telemetry Dashboard
 
+**[→ Live demo](https://flam-assignment-beige.vercel.app/dashboard)**
+
 A performance-critical data visualisation dashboard built with **Next.js 15 (App Router)** and
 **TypeScript**. Eight live telemetry channels, up to **250,000 points retained**, rendered on raw
 Canvas with an SVG interaction layer.
