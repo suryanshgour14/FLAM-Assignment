@@ -12,16 +12,23 @@ are `next`, `react` and `react-dom`.
 
 ![Dashboard at 100,000 points](public/screenshots/dashboard-100k.png)
 
-| Points held | FPS | Frame p95 | Frame max | JS heap |
+| Points held | Frame p50 | Frame p95 | Canvas work/frame | JS heap |
 | --- | --- | --- | --- | --- |
-| 10,000 | **60** | 16.9 ms | 17.3 ms | 5.8 MB |
-| 50,000 | **60** | 16.9 ms | 17.0 ms | 6.0 MB |
-| 100,000 | **60** | 16.9 ms | 17.0 ms | 6.6 MB |
-| 250,000 | **60** | 16.9 ms | 17.0 ms | 8.8 MB |
+| 10,000 | **16.7 ms** | 16.9 ms | 0.4–0.6 ms | 5.6 MB |
+| 50,000 | **16.7 ms** | 33.2 ms | 0.5–0.9 ms | 6.3 MB |
+| 100,000 | **16.7 ms** | 33.4 ms | 1.1–1.2 ms | 6.9 MB |
+| 250,000 | **16.7 ms** | 33.3 ms | 1.2–1.8 ms | 8.6 MB |
 
-Measured on a production build via `npm run bench`. Retained heap over four minutes of live
-streaming: **−0.14 MB**. Full methodology, and the story of a React update loop that leaked ~200,000
-objects every three minutes without any benchmark noticing, in **[PERFORMANCE.md](PERFORMANCE.md)**.
+A 16.7 ms median frame *is* vsync — 60fps, unchanged from 10,000 points to 250,000, because
+drawing cost is bounded by the viewport rather than the dataset. The 33 ms p95 at 50k+ is one
+missed vsync on ~5% of frames, traced to the store's 4Hz React notification; PERFORMANCE.md
+explains the trade.
+
+Measured on a production build via `npm run bench` — medians across three sampling windows, run
+three times. No measurable heap retention over sustained streaming.
+
+**[PERFORMANCE.md](PERFORMANCE.md)** has the full methodology, plus the story of a React update
+loop that leaked ~200,000 objects every three minutes while every benchmark reported a clean 60fps.
 
 ---
 

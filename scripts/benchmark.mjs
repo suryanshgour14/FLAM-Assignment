@@ -23,7 +23,7 @@ const VIEWPORT = { width: 1600, height: 950 };
 
 /** Milliseconds to sit at a load level before reading. Must exceed the HUD's
  *  120-frame sampling window, or you measure the previous scenario. */
-const SETTLE_MS = 13_000;
+const SETTLE_MS = 6_000;
 
 const PRESETS = [
   { total: 10_000, label: '10k' },
@@ -42,8 +42,8 @@ async function readMetrics(page) {
   });
 }
 
-/** Frame-time distribution measured independently of the app's own sampler. */
-async function sampleFrames(page, count = 240) {
+/** One window of frame times, measured independently of the app's own sampler. */
+async function sampleWindow(page, count = 180) {
   return page.evaluate(async (n) => {
     const deltas = [];
     let last = performance.now();
@@ -68,16 +68,72 @@ async function sampleFrames(page, count = 240) {
   }, count);
 }
 
+/**
+ * Steady-state frame timing: several consecutive windows, first one discarded,
+ * median of the rest reported.
+ *
+ * A single window is not trustworthy on a desktop. The first version of this
+ * took one 240-frame sample per scenario and produced results that disagreed
+ * between runs by 2× — 50,000 points once showed a 1,415ms worst frame while
+ * 250,000 points in the same run was clean at 17ms. A regression that scales
+ * with load does not skip a load level, so that was never the renderer: it was
+ * the backfill transition, a GC, or the OS scheduling something else, landing
+ * inside the measurement window.
+ *
+ * Discarding the first window skips the transition; taking the median across
+ * the remainder stops one unlucky window from defining the result. `spread`
+ * reports how much the windows disagreed, so the noise is visible rather than
+ * hidden.
+ */
+async function sampleSteadyState(page, windows = 4) {
+  const runs = [];
+  for (let i = 0; i < windows; i += 1) {
+    runs.push(await sampleWindow(page));
+    await page.waitForTimeout(400);
+  }
+  const kept = runs.slice(1);
+  const med = (key) => {
+    const vals = kept.map((r) => r[key]).sort((a, b) => a - b);
+    return vals[Math.floor(vals.length / 2)];
+  };
+  const p95s = kept.map((r) => r.p95);
+  return {
+    p50: med('p50'),
+    p95: med('p95'),
+    max: Math.max(...kept.map((r) => r.max)),
+    spread: +(Math.max(...p95s) - Math.min(...p95s)).toFixed(1),
+    windows: kept.length,
+  };
+}
+
+/**
+ * Blocks until the buffer has actually filled to `target`.
+ *
+ * Clicking a preset kicks off a backfill that lands over many animation frames.
+ * Measuring on a fixed timeout meant sometimes sampling mid-fill, which is
+ * where the wild outliers came from.
+ */
+async function waitForPoints(page, target, timeoutMs = 30_000) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const held = await page.evaluate(
+      () => +(document.querySelector('[data-metric="points"]')?.getAttribute('data-value') ?? 0),
+    );
+    if (held >= target * 0.98) return held;
+    await page.waitForTimeout(400);
+  }
+  return -1;
+}
+
 function row(label, m, frames) {
-  const fps = Number(m.fps ?? 0).toFixed(0);
   const points = Number(m.points ?? 0);
   const heapMb = (Number(m.heap ?? 0) / 1048576).toFixed(1);
   return (
-    `${label.padEnd(22)} ` +
-    `fps=${fps.padStart(3)}  ` +
+    `${label.padEnd(20)} ` +
     `p50=${String(frames.p50).padStart(5)}ms  ` +
     `p95=${String(frames.p95).padStart(6)}ms  ` +
     `max=${String(frames.max).padStart(6)}ms  ` +
+    `±${String(frames.spread).padStart(5)}ms  ` +
     `canvas=${Number(m.canvasMs ?? 0).toFixed(2)}ms  ` +
     `held=${String(points).padStart(6)}  ` +
     `heap=${heapMb}MB`
@@ -118,12 +174,18 @@ if (!Number(first.points) || !Number(first.fps)) {
 }
 console.log(`  worker: ${first.thread === 'worker' ? 'active' : 'FALLBACK to main thread'}\n`);
 
+console.log('  p50/p95 are medians across 3 windows of 180 frames; ± is the spread between them.\n');
+
 // --- Capacity sweep at the spec'd 100ms cadence ---------------------------
 for (const p of PRESETS) {
   await page.click(`[data-preset="${p.total}"]`);
-  await page.waitForTimeout(3_000); // backfill lands across a few frames
+  const held = await waitForPoints(page, p.total);
+  if (held < 0) {
+    console.log(`${p.label.padEnd(20)} FAILED to fill — skipping`);
+    continue;
+  }
   await page.waitForTimeout(SETTLE_MS);
-  const frames = await sampleFrames(page);
+  const frames = await sampleSteadyState(page);
   const m = await readMetrics(page);
   console.log(row(`${p.label} @ 100ms`, m, frames));
   results.push({ scenario: `${p.label} @ 100ms`, ...m, frames });
@@ -131,10 +193,11 @@ for (const p of PRESETS) {
 
 // --- Stress: 100k points, 240 points every 16ms ---------------------------
 await page.click('[data-preset="100000"]');
-await page.waitForTimeout(3_000);
+await waitForPoints(page, 100_000);
+await page.waitForTimeout(2_000);
 await page.click('[data-action="stress"]');
 await page.waitForTimeout(SETTLE_MS);
-const stressFrames = await sampleFrames(page);
+const stressFrames = await sampleSteadyState(page);
 const stressM = await readMetrics(page);
 console.log(row('100k STRESS @ 16ms', stressM, stressFrames));
 results.push({ scenario: '100k stress @ 16ms', ...stressM, frames: stressFrames });
