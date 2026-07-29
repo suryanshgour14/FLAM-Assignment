@@ -272,13 +272,22 @@ export function useDataStream({
       ingestedInWindow.current = 0;
       windowStart.current = now;
 
-      setStats({
-        pointsPerSecond: Math.round(pps),
-        totalIngested: store.totalIngested,
-        lastTickMs: lastTickMs.current,
-        workerActive: workerReady.current,
-        ticks: tickCount.current,
-      });
+      // Skip the dispatch entirely when nothing moved — a paused stream would
+      // otherwise push an identical object once a second forever, and every one
+      // of those is an allocation plus a queue entry before React can discard it.
+      setStats((prev) =>
+        prev.pointsPerSecond === Math.round(pps) &&
+        prev.totalIngested === store.totalIngested &&
+        prev.workerActive === workerReady.current
+          ? prev
+          : {
+              pointsPerSecond: Math.round(pps),
+              totalIngested: store.totalIngested,
+              lastTickMs: lastTickMs.current,
+              workerActive: workerReady.current,
+              ticks: tickCount.current,
+            },
+      );
     }, 1000);
 
     return () => clearInterval(id);

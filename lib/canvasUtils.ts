@@ -146,31 +146,54 @@ export function withAlpha(hex: string, alpha: number): string {
   return out;
 }
 
-/** Blend two hex colours. Used by the heatmap ramp. */
-export function mixHex(a: string, b: string, t: number): [number, number, number] {
-  const na = parseInt(a.slice(1), 16);
-  const nb = parseInt(b.slice(1), 16);
-  const ar = (na >> 16) & 255;
-  const ag = (na >> 8) & 255;
-  const ab = na & 255;
-  const br = (nb >> 16) & 255;
-  const bg = (nb >> 8) & 255;
-  const bb = nb & 255;
-  return [
-    Math.round(ar + (br - ar) * t),
-    Math.round(ag + (bg - ag) * t),
-    Math.round(ab + (bb - ab) * t),
-  ];
-}
-
 /** Cool → warm ramp for the heatmap. Perceptually ordered, dark-background safe. */
 const HEAT_STOPS = ['#101a2e', '#173a5e', '#1e6f8f', '#2dd4bf', '#a3e635', '#f5a524', '#f87171'];
 
-export function heatColor(t: number): [number, number, number] {
+/**
+ * The ramp, precomputed once into a flat lookup table.
+ *
+ * This used to interpolate on demand and return a fresh `[r, g, b]` array. The
+ * heatmap calls it once per cell — 480 columns × 8 rows, twelve times a second
+ * — so that was ~46,000 three-element arrays allocated *per second*, every one
+ * of them dead before the next frame. Pure garbage-collector fuel for a
+ * function whose entire output space is 256 colours.
+ *
+ * Now it's a 256×3 Uint8Array built at module load, and `heatColor` is three
+ * array reads with no allocation at all.
+ */
+const RAMP_STEPS = 256;
+const HEAT_RAMP = buildRamp();
+
+function buildRamp(): Uint8Array {
+  const ramp = new Uint8Array(RAMP_STEPS * 3);
+  const stops = HEAT_STOPS.map((hex) => {
+    const n = parseInt(hex.slice(1), 16);
+    return [(n >> 16) & 255, (n >> 8) & 255, n & 255];
+  });
+
+  for (let i = 0; i < RAMP_STEPS; i += 1) {
+    const scaled = (i / (RAMP_STEPS - 1)) * (stops.length - 1);
+    const lo = Math.min(stops.length - 2, Math.floor(scaled));
+    const t = scaled - lo;
+    const a = stops[lo];
+    const b = stops[lo + 1];
+    ramp[i * 3] = Math.round(a[0] + (b[0] - a[0]) * t);
+    ramp[i * 3 + 1] = Math.round(a[1] + (b[1] - a[1]) * t);
+    ramp[i * 3 + 2] = Math.round(a[2] + (b[2] - a[2]) * t);
+  }
+  return ramp;
+}
+
+/**
+ * Writes the colour for `t` (0–1) into `out` at `offset`. Allocation-free by
+ * design — the caller owns the destination.
+ */
+export function heatColorInto(t: number, out: Uint8ClampedArray | Uint8Array, offset: number): void {
   const clamped = t <= 0 ? 0 : t >= 1 ? 1 : t;
-  const scaled = clamped * (HEAT_STOPS.length - 1);
-  const i = Math.min(HEAT_STOPS.length - 2, Math.floor(scaled));
-  return mixHex(HEAT_STOPS[i], HEAT_STOPS[i + 1], scaled - i);
+  const i = ((clamped * (RAMP_STEPS - 1)) | 0) * 3;
+  out[offset] = HEAT_RAMP[i];
+  out[offset + 1] = HEAT_RAMP[i + 1];
+  out[offset + 2] = HEAT_RAMP[i + 2];
 }
 
 export const CHART_INK = {

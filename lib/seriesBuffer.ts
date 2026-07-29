@@ -143,7 +143,13 @@ export class DataStore {
   lastWriteAt = 0;
 
   private listeners = new Set<() => void>();
-  private extentCache: { key: string; at: number; extent: Extent } | null = null;
+  private extentCache: {
+    mask: number;
+    from: number;
+    to: number;
+    at: number;
+    extent: Extent;
+  } | null = null;
   private notifyTimer: ReturnType<typeof setTimeout> | null = null;
   private notifyIntervalMs: number;
   private pendingNotify = false;
@@ -233,16 +239,22 @@ export class DataStore {
    * next to the 8% headroom the charts add anyway — and it recomputes the
    * moment the user zooms, because that changes the key.
    */
-  valueExtent(categories: Iterable<Category>, from: number, to: number): Extent {
-    const cats = Array.from(categories);
-    const key = `${cats.join(',')}|${from}|${to}`;
+  valueExtent(categories: readonly Category[], from: number, to: number): Extent {
+    // A numeric fingerprint rather than a joined string: this is called by every
+    // chart on every frame, and building a template-literal key was allocating
+    // three strings per call for the sole purpose of comparing them.
+    let mask = 0;
+    for (let i = 0; i < categories.length; i += 1) mask |= 1 << CATEGORIES.indexOf(categories[i]);
+
     const now = this.clock();
     const hit = this.extentCache;
-    if (hit && hit.key === key && now - hit.at < 100) return hit.extent;
+    if (hit && hit.mask === mask && hit.from === from && hit.to === to && now - hit.at < 100) {
+      return hit.extent;
+    }
 
     let min = Number.POSITIVE_INFINITY;
     let max = Number.NEGATIVE_INFINITY;
-    for (const c of cats) {
+    for (const c of categories) {
       const ch = this.channels[c];
       if (ch.size === 0) continue;
       const start = ch.lowerBound(from);
@@ -259,7 +271,7 @@ export class DataStore {
     else if (min === max) extent = { min: min - 1, max: max + 1 };
     else extent = { min, max };
 
-    this.extentCache = { key, at: now, extent };
+    this.extentCache = { mask, from, to, at: now, extent };
     return extent;
   }
 

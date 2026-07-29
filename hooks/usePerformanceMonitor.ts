@@ -51,9 +51,23 @@ export function usePerformanceMonitor({
   bufferBytes,
   enabled = true,
 }: UsePerformanceMonitorOptions = {}): PerfMonitorState {
-  const [metrics, setMetrics] = useState<PerformanceMetrics>(EMPTY);
-  const [memorySupported, setMemorySupported] = useState(false);
-  const [bytes, setBytes] = useState(0);
+  /**
+   * One state object, not three.
+   *
+   * This started as `setMetrics` + `setMemorySupported` + `setBytes`, and two
+   * of those pushed an identical value every single tick. React's eager-state
+   * bailout means such an update doesn't schedule a render — but it *is* still
+   * allocated and appended to the hook's update queue first. Three dispatches a
+   * second, forever, for two values that never change after the first sample.
+   *
+   * Collapsing them into a single object means one dispatch per report, and
+   * that dispatch always carries a genuinely new value.
+   */
+  const [state, setState] = useState<{
+    metrics: PerformanceMetrics;
+    memorySupported: boolean;
+    bytes: number;
+  }>({ metrics: EMPTY, memorySupported: false, bytes: 0 });
 
   const samplerRef = useRef<FrameSampler | null>(null);
   const renderEma = useRef(new Ema(0.15));
@@ -90,19 +104,21 @@ export function usePerformanceMonitor({
         h[HISTORY - 1] = fps;
       }
 
-      setMemorySupported(heap.supported);
-      setBytes(bufferBytesRef.current?.() ?? 0);
-      setMetrics({
-        fps,
-        worstFrameMs: sampler.worst(),
-        p95FrameMs: sampler.percentile(95),
-        memoryUsage: heap.used,
-        memoryLimit: heap.limit,
-        renderTime: renderEma.current.value,
-        // Read off the bus rather than from User Timing entries — see
-        // lib/perfBus.ts for why the hot paths stopped emitting marks.
-        dataProcessingTime: perfBus.dataProcessing.value,
-        droppedFrames: sampler.droppedFrames,
+      setState({
+        memorySupported: heap.supported,
+        bytes: bufferBytesRef.current?.() ?? 0,
+        metrics: {
+          fps,
+          worstFrameMs: sampler.worst(),
+          p95FrameMs: sampler.percentile(95),
+          memoryUsage: heap.used,
+          memoryLimit: heap.limit,
+          renderTime: renderEma.current.value,
+          // Read off the bus rather than from User Timing entries — see
+          // lib/perfBus.ts for why the hot paths stopped emitting marks.
+          dataProcessingTime: perfBus.dataProcessing.value,
+          droppedFrames: sampler.droppedFrames,
+        },
       });
     }, 100); // Priority 100 — measure after every chart has drawn.
 
@@ -141,10 +157,10 @@ export function usePerformanceMonitor({
   }, [enabled]);
 
   return {
-    ...metrics,
+    ...state.metrics,
     history: historyRef.current,
     historyLength: historyLen.current,
-    memorySupported,
-    bufferBytes: bytes,
+    memorySupported: state.memorySupported,
+    bufferBytes: state.bytes,
   };
 }

@@ -197,24 +197,42 @@ export function DataProvider({ initialData, children }: DataProviderProps) {
   // interrupt the work if another click lands.
   const setTimeRange = useCallback(
     (r: TimeRangePreset) => {
-      startTransition(() => setFilters((prev) => ({ ...prev, timeRange: r })));
+      startTransition(() =>
+        setFilters((prev) => (prev.timeRange === r ? prev : { ...prev, timeRange: r })),
+      );
     },
     [startTransition],
   );
 
   const setAggregation = useCallback(
     (a: AggregationWindow) => {
-      startTransition(() => setFilters((prev) => ({ ...prev, aggregation: a })));
+      startTransition(() =>
+        setFilters((prev) => (prev.aggregation === a ? prev : { ...prev, aggregation: a })),
+      );
     },
     [startTransition],
   );
 
   const setValueBounds = useCallback((min: number, max: number) => {
-    setFilters((prev) => ({ ...prev, valueMin: min, valueMax: max }));
+    setFilters((prev) =>
+      prev.valueMin === min && prev.valueMax === max
+        ? prev
+        : { ...prev, valueMin: min, valueMax: max },
+    );
   }, []);
 
+  /**
+   * Returning `prev` unchanged is load-bearing, not a micro-optimisation.
+   *
+   * Every one of these setters spreads into a *new* filters object, which is a
+   * new context value, which re-renders every consumer. If a caller can be
+   * driven by something that re-runs on render, an unconditional spread turns
+   * into a feedback loop. That is exactly what happened with the search box —
+   * see the note in FilterPanel. Bailing out when nothing changed makes the
+   * whole setter surface safe against it.
+   */
   const setSearch = useCallback((s: string) => {
-    setFilters((prev) => ({ ...prev, search: s }));
+    setFilters((prev) => (prev.search === s ? prev : { ...prev, search: s }));
   }, []);
 
   const resetFilters = useCallback(() => {

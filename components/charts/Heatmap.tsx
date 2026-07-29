@@ -7,7 +7,7 @@ import { EmptyOverlay } from './ChartChrome';
 import { useChartRenderer, type RenderArgs } from '@/hooks/useChartRenderer';
 import { resolveWindow } from '@/lib/timeWindow';
 import { CATEGORY_META } from '@/lib/dataGenerator';
-import { CHART_INK, formatTime, heatColor, timeTicks } from '@/lib/canvasUtils';
+import { CHART_INK, formatTime, heatColorInto, timeTicks } from '@/lib/canvasUtils';
 import { CATEGORIES, type Category } from '@/lib/types';
 
 /**
@@ -141,10 +141,8 @@ function HeatmapImpl() {
             buf[idx + 1] = 16;
             buf[idx + 2] = 24;
           } else {
-            const rgb = heatColor(norm === 0 ? 0.5 : (colAvg[c] - lo) * norm);
-            buf[idx] = rgb[0];
-            buf[idx + 1] = rgb[1];
-            buf[idx + 2] = rgb[2];
+            // Writes straight into the pixel buffer — no intermediate array.
+            heatColorInto(norm === 0 ? 0.5 : (colAvg[c] - lo) * norm, buf, idx);
           }
           buf[idx + 3] = 255;
           idx += 4;

@@ -1,6 +1,6 @@
 'use client';
 
-import { memo, useDeferredValue, useEffect, useState } from 'react';
+import { memo, startTransition, useCallback, useDeferredValue, useState } from 'react';
 import styles from './controls.module.css';
 import {
   useDashboardActions,
@@ -26,13 +26,35 @@ function FilterPanelImpl() {
   const actions = useDashboardActions();
 
   const [text, setText] = useState(filters.search);
+
+  /**
+   * `useDeferredValue` keeps the input responsive: `text` updates urgently so
+   * the caret never lags, and the filtered list below re-runs at lower
+   * priority. Typing "thr" quickly settles into one render instead of three.
+   */
   const deferredText = useDeferredValue(text);
 
-  // Push the settled value up to the provider rather than on every keystroke,
-  // so the whole tree isn't re-rendered mid-word.
-  useEffect(() => {
-    actions.setSearch(deferredText);
-  }, [deferredText, actions]);
+  /**
+   * Shared state is updated from the event handler, *not* from an effect.
+   *
+   * This was originally `useEffect(() => actions.setSearch(deferredText),
+   * [deferredText, actions])`, which is an infinite loop: `setSearch` spreads
+   * into a new filters object every time, that new object is a new context
+   * value, the new context value re-renders this component, and the deferred-
+   * value machinery re-runs the effect. React only warns about it in
+   * development — in a production build it span silently at roughly 280 updates
+   * per second, and the only visible symptom was a heap that grew forever.
+   *
+   * Found by diffing heap snapshots: a single fiber's `baseQueue` had 60,000+
+   * pending updates chained off it.
+   */
+  const onSearchChange = useCallback(
+    (value: string) => {
+      setText(value);
+      startTransition(() => actions.setSearch(value));
+    },
+    [actions],
+  );
 
   const needle = deferredText.trim().toLowerCase();
   const visible = needle
@@ -69,7 +91,7 @@ function FilterPanelImpl() {
           className={styles.search}
           type="search"
           value={text}
-          onChange={(e) => setText(e.target.value)}
+          onChange={(e) => onSearchChange(e.target.value)}
           placeholder="Filter channels…"
           aria-label="Filter channels by name"
           spellCheck={false}
